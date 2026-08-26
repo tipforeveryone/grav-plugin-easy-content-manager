@@ -1,0 +1,45 @@
+name: "[TIP] - Easy Content Manager"
+version: 0.1.0
+description: Trang quản lý nội dung nhanh trong Admin — lọc theo template/ngôn ngữ, tìm theo tiêu đề, sửa/xoá content trực tiếp từ 1 bảng duy nhất.
+icon: list
+author:
+  name: tipforeveryone
+keywords: content, manager, admin, pages, search, filter
+license: MIT
+
+dependencies:
+  - { name: grav, version: '>=1.7.0' }
+  - { name: admin }
+
+form:
+  validation: loose
+  fields:
+    enabled:
+      type: toggle
+      label: Plugin status
+      highlight: 1
+      default: 1
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool
+
+    templates:
+      type: checkboxes
+      label: Template được duyệt hiển thị
+      help: 'Chỉ các trang dùng 1 trong các template được chọn ở đây mới xuất hiện trong Easy Content Manager — cả trong dropdown "Content type" lẫn trong bảng kết quả. Bỏ trống nghĩa là chưa bật cho template nào.'
+      data-options@: '\Grav\Plugin\EasyContentManagerPlugin::getTemplateOptions'
+      wrapper_classes: ecm-templates-grid
+      use: keys
+
+    enable_slms:
+      type: toggle
+      label: Enable SLMS Plugin
+      help: 'Bật để hiển thị thêm dropdown "Language" và 2 cột Language/Translation trong bảng, dựa trên field smls_language/smls_translations của plugin "Simple Multi Language Site". Chỉ có tác dụng khi plugin đó đã được cài đặt VÀ đang bật — nếu chưa cài, 2 cột này luôn bị ẩn dù tick này bật.'
+      default: 0
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool

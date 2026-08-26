@@ -1,0 +1,466 @@
+{% extends 'partials/base.html.twig' %}
+
+{% block titlebar %}
+    <div class="button-bar">
+        <a class="button" href="{{ base_url }}"><i class="fa fa-reply"></i> {{ "PLUGIN_ADMIN.BACK"|t }}</a>
+    </div>
+    <h1><i class="fa fa-fw fa-list"></i> Content Manager</h1>
+{% endblock %}
+
+{% block content %}
+{% set slms_active = ecm_slms_active() %}
+<div id="ecm-app"
+     data-ajax-url="{{ current_url }}.json"
+     data-nonce="{{ admin.getNonce() }}"
+     data-slms-active="{{ slms_active ? '1' : '0' }}">
+
+    <style>
+        #ecm-app { padding: 0 2rem 3rem 2rem; }
+
+        #ecm-app .ecm-filters {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding: 0.6rem 0.8rem;
+            background: #f7f7f7;
+            border: 1px solid #e6e6e6;
+            border-radius: 4px;
+        }
+        #ecm-app .ecm-filter-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            height: 2.4rem;
+        }
+        #ecm-app .ecm-filter-item label {
+            font-weight: 600;
+            color: #555;
+            white-space: nowrap;
+            margin: 0;
+        }
+        #ecm-app #ecm-search {
+            height: 2.4rem;
+            box-sizing: border-box;
+            min-width: 16rem;
+            padding: 0 0.6rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #ecm-app select,
+        #ecm-app .ecm-filters .button {
+            height: 2.4rem;
+            box-sizing: border-box;
+        }
+        #ecm-app select {
+            margin: 0;
+            padding: 0 0.6rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            /* Without an explicit line-height matching the fixed height,
+               some browsers (Chrome/Edge on Windows) anchor the select's
+               text/arrow to the top of the box instead of centering it. */
+            line-height: 2.4rem;
+        }
+        #ecm-app .ecm-filters .button {
+            line-height: 1;
+        }
+
+        #ecm-app .ecm-filters + .ecm-filters { margin-top: -0.4rem; }
+        #ecm-app .ecm-filter-item-search { flex: 1 1 auto; }
+        #ecm-app .ecm-filter-item-search input { flex: 1 1 auto; }
+
+        #ecm-app #ecm-status:not(:empty) { margin-bottom: 1rem; }
+
+        /*
+         * The admin theme renders <table class="overview-list"> with flexbox
+         * (tr { display:flex }, td/th { display:block; flex:1 }) — CSS
+         * `width` on td/th has no effect. Use `flex: 0 0 <rem>` (fixed) for
+         * narrow columns, so Title keeps the default flex:1 and stretches.
+         */
+        #ecm-app table.overview-list td.ecm-col-narrow,
+        #ecm-app table.overview-list th.ecm-col-narrow {
+            flex: 0 0 8rem;
+        }
+        #ecm-app table.overview-list td.ecm-col-action,
+        #ecm-app table.overview-list th.ecm-col-action {
+            flex: 0 0 4.5rem;
+            text-align: center;
+        }
+        #ecm-app table.overview-list td.ecm-col-action {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #ecm-app table.overview-list td,
+        #ecm-app table.overview-list th {
+            word-break: break-word;
+            padding-top: 0.35rem;
+            padding-bottom: 0.35rem;
+        }
+        #ecm-app table.overview-list tbody tr:nth-child(even) {
+            background: #f5f5f5;
+        }
+        #ecm-app .ecm-slug {
+            color: #777;
+            font-size: 0.85rem;
+        }
+        #ecm-app .ecm-translation-ok { color: #2c5; font-weight: 600; }
+        #ecm-app .ecm-translation-missing { color: #c9544a; font-weight: 600; }
+        #ecm-app .ecm-empty {
+            padding: 1rem 0;
+            color: #777;
+        }
+
+        #ecm-app .ecm-pagination {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding: 0.6rem 0.8rem;
+            background: #f7f7f7;
+            border: 1px solid #e6e6e6;
+            border-radius: 4px;
+        }
+        #ecm-app .ecm-pagination-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        #ecm-app .ecm-pagination-nav .button {
+            height: 2.4rem;
+            box-sizing: border-box;
+            line-height: 1;
+        }
+        #ecm-app #ecm-page-label {
+            color: #555;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+    </style>
+
+    {# Khối 1: lọc theo Content type + Language — áp dụng trước, thu hẹp tập content. #}
+    <div class="ecm-filters">
+        <div class="ecm-filter-item">
+            <label for="ecm-type">Content type</label>
+            <select id="ecm-type">
+                <option value="">All content</option>
+                {% for slug, label in ecm_template_options() %}
+                    <option value="{{ slug }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% if slms_active %}
+        <div class="ecm-filter-item">
+            <label for="ecm-language">Language</label>
+            <select id="ecm-language">
+                <option value="">All languages</option>
+                {% for code, label in ecm_language_options() %}
+                    <option value="{{ code }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <button type="button" class="button primary" id="ecm-filter-btn">
+            <i class="fa fa-filter"></i> Filter
+        </button>
+    </div>
+
+    {# Khối 2: search theo tiêu đề — bộ lọc độc lập, áp dụng SAU khối 1 ở trên (chạy trên tập content đã được lọc theo Content type + Language). Để trống = không lọc theo tiêu đề. #}
+    <div class="ecm-filters">
+        <div class="ecm-filter-item ecm-filter-item-search">
+            <label for="ecm-search">Search theo tiêu đề</label>
+            <input type="text" id="ecm-search">
+        </div>
+        <button type="button" class="button primary" id="ecm-search-btn">
+            <i class="fa fa-search"></i> Search
+        </button>
+    </div>
+
+    <div id="ecm-status"></div>
+
+    <table id="ecm-table" class="overview-list">
+        <thead>
+            <tr>
+                <th class="ecm-col-narrow">Type</th>
+                {% if slms_active %}
+                <th class="ecm-col-narrow">Language</th>
+                <th>Translation</th>
+                {% endif %}
+                <th>Title</th>
+                <th class="ecm-col-narrow">Ngày đăng</th>
+                <th>Slug</th>
+                <th class="ecm-col-action">Edit</th>
+                <th class="ecm-col-action">Delete</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div class="ecm-pagination">
+        <div class="ecm-filter-item">
+            <label for="ecm-page-size">Số dòng/trang</label>
+            <select id="ecm-page-size">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+            </select>
+        </div>
+        <div class="ecm-pagination-nav">
+            <button type="button" class="button" id="ecm-prev-page" title="Trang trước"><i class="fa fa-chevron-left"></i></button>
+            <span id="ecm-page-label">Trang 1 / 1</span>
+            <button type="button" class="button" id="ecm-next-page" title="Trang sau"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var app = document.getElementById('ecm-app');
+    if (!app) { return; }
+
+    var ajaxUrl = app.dataset.ajaxUrl;
+    var nonce = app.dataset.nonce;
+    var slmsActive = app.dataset.slmsActive === '1';
+
+    var searchInput = document.getElementById('ecm-search');
+    var typeSelect = document.getElementById('ecm-type');
+    var languageSelect = document.getElementById('ecm-language');
+    var filterBtn = document.getElementById('ecm-filter-btn');
+    var searchBtn = document.getElementById('ecm-search-btn');
+    var statusEl = document.getElementById('ecm-status');
+    var table = document.getElementById('ecm-table');
+    var tbody = table.querySelector('tbody');
+    var pageSizeSelect = document.getElementById('ecm-page-size');
+    var prevPageBtn = document.getElementById('ecm-prev-page');
+    var nextPageBtn = document.getElementById('ecm-next-page');
+    var pageLabel = document.getElementById('ecm-page-label');
+
+    var allRows = [];
+    var currentPage = 1;
+
+    function setStatus(message, isError) {
+        statusEl.textContent = message || '';
+        statusEl.className = isError ? 'notices error' : 'notices';
+    }
+
+    function post(task, fields) {
+        var fd = new FormData();
+        fd.append('task', task);
+        fd.append('admin-nonce', nonce);
+        Object.keys(fields || {}).forEach(function (key) {
+            fd.append(key, fields[key]);
+        });
+
+        return fetch(ajaxUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function (res) { return res.json(); });
+    }
+
+    function renderRows(rows) {
+        tbody.innerHTML = '';
+
+        if (!rows || rows.length === 0) {
+            var tr = document.createElement('tr');
+            var td = document.createElement('td');
+            td.className = 'ecm-empty';
+            td.colSpan = slmsActive ? 8 : 6;
+            td.textContent = 'Không có content nào khớp bộ lọc.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+            return;
+        }
+
+        rows.forEach(function (row) {
+            var tr = document.createElement('tr');
+
+            var tdType = document.createElement('td');
+            tdType.className = 'ecm-col-narrow';
+            tdType.textContent = row.type_label;
+            tr.appendChild(tdType);
+
+            if (slmsActive) {
+                var tdLang = document.createElement('td');
+                tdLang.className = 'ecm-col-narrow';
+                tdLang.textContent = row.language_label || '';
+                tr.appendChild(tdLang);
+
+                var tdTrans = document.createElement('td');
+                var isOk = row.translation === 'OK';
+                tdTrans.className = isOk ? 'ecm-translation-ok' : 'ecm-translation-missing';
+                tdTrans.textContent = row.translation || '';
+                tr.appendChild(tdTrans);
+            }
+
+            var tdTitle = document.createElement('td');
+            tdTitle.textContent = row.title;
+            tr.appendChild(tdTitle);
+
+            var tdDate = document.createElement('td');
+            tdDate.className = 'ecm-col-narrow';
+            tdDate.textContent = row.date || '';
+            tr.appendChild(tdDate);
+
+            var tdSlug = document.createElement('td');
+            tdSlug.className = 'ecm-slug';
+            tdSlug.textContent = row.slug;
+            tr.appendChild(tdSlug);
+
+            var tdEdit = document.createElement('td');
+            tdEdit.className = 'ecm-col-action';
+            var editLink = document.createElement('a');
+            editLink.className = 'button';
+            editLink.href = row.edit_url;
+            editLink.title = 'Edit';
+            editLink.innerHTML = '<i class="fa fa-pencil"></i>';
+            tdEdit.appendChild(editLink);
+            tr.appendChild(tdEdit);
+
+            var tdDelete = document.createElement('td');
+            tdDelete.className = 'ecm-col-action';
+            var deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'button';
+            deleteBtn.title = 'Delete';
+            deleteBtn.innerHTML = '<i class="fa fa-trash"></i>';
+            deleteBtn.dataset.route = row.route;
+            deleteBtn.dataset.title = row.title;
+            tdDelete.appendChild(deleteBtn);
+            tr.appendChild(tdDelete);
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    var FILTERS_STORAGE_KEY = 'ecm-filters';
+
+    function saveFilters() {
+        try {
+            var saved = {
+                type: typeSelect.value,
+                q: searchInput.value,
+                pageSize: pageSizeSelect.value
+            };
+            if (slmsActive && languageSelect) {
+                saved.language = languageSelect.value;
+            }
+            localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(saved));
+        } catch (e) { /* private browsing / storage blocked — ignore */ }
+    }
+
+    function restoreFilters() {
+        try {
+            var raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+            if (!raw) { return; }
+            var saved = JSON.parse(raw);
+            if (saved.type !== undefined) { typeSelect.value = saved.type; }
+            if (saved.q !== undefined) { searchInput.value = saved.q; }
+            if (saved.pageSize !== undefined) { pageSizeSelect.value = saved.pageSize; }
+            if (slmsActive && languageSelect && saved.language !== undefined) {
+                languageSelect.value = saved.language;
+            }
+        } catch (e) { /* private browsing / storage blocked / bad JSON — ignore */ }
+    }
+
+    function pageSize() {
+        return parseInt(pageSizeSelect.value, 10) || 20;
+    }
+
+    function totalPages() {
+        return Math.max(1, Math.ceil(allRows.length / pageSize()));
+    }
+
+    function renderPage() {
+        var pages = totalPages();
+        if (currentPage > pages) { currentPage = pages; }
+        if (currentPage < 1) { currentPage = 1; }
+
+        var start = (currentPage - 1) * pageSize();
+        renderRows(allRows.slice(start, start + pageSize()));
+
+        pageLabel.textContent = 'Trang ' + currentPage + ' / ' + pages;
+        prevPageBtn.disabled = currentPage <= 1;
+        nextPageBtn.disabled = currentPage >= pages;
+    }
+
+    function loadContent() {
+        setStatus('Đang tải...', false);
+        saveFilters();
+
+        var fields = {
+            type: typeSelect.value,
+            q: searchInput.value
+        };
+        if (slmsActive && languageSelect) {
+            fields.language = languageSelect.value;
+        }
+
+        post('ecmlistcontent', fields).then(function (data) {
+            if (data.status !== 'success') {
+                setStatus('Error: ' + (data.message || 'unknown'), true);
+                return;
+            }
+            allRows = data.rows || [];
+            currentPage = 1;
+            renderPage();
+            setStatus(allRows.length + ' content.', false);
+        }).catch(function (e) {
+            setStatus('Error: ' + e, true);
+        });
+    }
+
+    filterBtn.addEventListener('click', loadContent);
+    searchBtn.addEventListener('click', loadContent);
+
+    pageSizeSelect.addEventListener('change', function () {
+        saveFilters();
+        currentPage = 1;
+        renderPage();
+    });
+    prevPageBtn.addEventListener('click', function () {
+        currentPage--;
+        renderPage();
+    });
+    nextPageBtn.addEventListener('click', function () {
+        currentPage++;
+        renderPage();
+    });
+    searchInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            loadContent();
+        }
+    });
+
+    tbody.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-route]');
+        if (!btn) { return; }
+
+        var route = btn.dataset.route;
+        var title = btn.dataset.title;
+        if (!window.confirm('Xóa content "' + title + '"? Thao tác này không thể hoàn tác.')) {
+            return;
+        }
+
+        setStatus('Đang xóa...', false);
+        post('ecmdeletecontent', { route: route }).then(function (data) {
+            if (data.status !== 'success') {
+                setStatus('Error: ' + (data.message || 'unknown'), true);
+                return;
+            }
+            setStatus('Đã xóa.', false);
+            loadContent();
+        }).catch(function (e) {
+            setStatus('Error: ' + e, true);
+        });
+    });
+
+    restoreFilters();
+    loadContent();
+})();
+</script>
+{% endblock %}
