@@ -126,7 +126,7 @@ class EasyContentManagerPlugin extends Plugin
         $this->grav['twig']->plugins_hooked_nav['Content Manager'] = [
             'route' => 'easy-content-manager',
             'icon' => 'fa-list',
-            'authorize' => ['admin.pages', 'admin.super'],
+            'authorize' => ['admin.pages', 'admin.pages.list', 'admin.super'],
             'priority' => 85,
         ];
     }
@@ -455,6 +455,14 @@ class EasyContentManagerPlugin extends Plugin
         return $admin->getAdminRoute('/pages' . $page->rawRoute(), $page->language())->toString(true);
     }
 
+    /**
+     * Chấp nhận cả quyền "Pages" dạng blanket (admin.pages: true) lẫn dạng
+     * granular (chỉ tick "List" trong Admin → lưu thành admin.pages.list),
+     * đúng pattern core AdminController::taskFilterPages() dùng
+     * (['admin.pages', 'admin.pages.list', 'admin.super']) — kiểm tra đơn lẻ
+     * "admin.pages" sẽ luôn fail với tài khoản chỉ được cấp quyền con, vì
+     * User::authorize() so khớp tuyệt đối, không tự suy ra từ cấu trúc lồng.
+     */
     private function canManage(): bool
     {
         $user = $this->grav['user'] ?? null;
@@ -462,7 +470,13 @@ class EasyContentManagerPlugin extends Plugin
             return false;
         }
 
-        return $user->authorize('admin.pages') === true || $user->authorize('admin.super') === true;
+        foreach (['admin.super', 'admin.pages', 'admin.pages.list'] as $permission) {
+            if ($user->authorize($permission) === true) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function jsonError(string $message): void
