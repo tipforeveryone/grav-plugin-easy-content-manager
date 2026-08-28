@@ -41,7 +41,33 @@ class EasyContentManagerPlugin extends Plugin
             'onAdminTaskExecute' => ['onAdminTaskExecute', 0],
             'onTwigInitialized' => ['onTwigInitialized', 0],
             'onOutputGenerated' => ['onOutputGenerated', 0],
+            'onPagesInitialized' => ['onPagesInitialized', 0],
         ]);
+    }
+
+    /**
+     * Tài khoản không có admin.super (vd. chỉ admin.pages) không cần thấy
+     * Dashboard — điều hướng thẳng sang Content Manager, kể cả ngay sau khi
+     * đăng nhập (Admin luôn redirect về "/admin" = dashboard trước tiên).
+     */
+    public function onPagesInitialized(): void
+    {
+        /** @var \Grav\Plugin\Admin $admin */
+        $admin = $this->grav['admin'] ?? null;
+        if (!$admin || ($admin->location ?? '') !== 'dashboard') {
+            return;
+        }
+
+        $user = $this->grav['user'] ?? null;
+        if (!$user || !$user->authenticated || $user->authorize('admin.super') === true) {
+            return;
+        }
+
+        if (!$this->canManage()) {
+            return;
+        }
+
+        $this->grav->redirect($admin->getAdminRoute('/easy-content-manager')->toString(true));
     }
 
     /**
@@ -63,9 +89,32 @@ class EasyContentManagerPlugin extends Plugin
         $style = '<style>'
             . '.checkboxes.ecm-templates-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.5rem 1rem;}'
             . '.checkboxes.ecm-templates-grid label{margin:0;}'
+            . $this->hiddenNavCss()
             . '</style>';
 
         $this->grav->output = str_replace('</head>', $style . "\n</head>", $output);
+    }
+
+    /**
+     * Tài khoản không có admin.super không cần thấy Dashboard (đã tự redirect
+     * sang Content Manager — xem onPagesInitialized()) lẫn Pages (thao tác
+     * đăng bài đã có qua Admin Quick Menu + Content Manager) trong menu trái.
+     * Chỉ ẩn bằng CSS theo href cố định của core — không sửa admin.php.
+     */
+    private function hiddenNavCss(): string
+    {
+        $user = $this->grav['user'] ?? null;
+        if (!$user || !$user->authenticated || $user->authorize('admin.super') === true) {
+            return '';
+        }
+
+        if (!$this->canManage()) {
+            return '';
+        }
+
+        return '#admin-menu li:has(>a[href$="/admin/dashboard"]),'
+            . '#admin-menu li:has(>a[href$="/admin/pages"])'
+            . '{display:none;}';
     }
 
     public function onAdminMenu(): void
@@ -77,7 +126,7 @@ class EasyContentManagerPlugin extends Plugin
         $this->grav['twig']->plugins_hooked_nav['Content Manager'] = [
             'route' => 'easy-content-manager',
             'icon' => 'fa-list',
-            'authorize' => ['admin.super'],
+            'authorize' => ['admin.pages', 'admin.super'],
             'priority' => 85,
         ];
     }
@@ -413,7 +462,7 @@ class EasyContentManagerPlugin extends Plugin
             return false;
         }
 
-        return $user->authorize('admin.super') === true;
+        return $user->authorize('admin.pages') === true || $user->authorize('admin.super') === true;
     }
 
     private function jsonError(string $message): void
