@@ -7,6 +7,7 @@ use Grav\Common\Filesystem\Folder;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Page\Pages;
 use Grav\Common\Plugin;
+use Grav\Plugin\EasyContentManager\Api\EasyContentManagerApiController;
 use RocketTheme\Toolbox\Event\Event;
 
 /**
@@ -26,11 +27,68 @@ class EasyContentManagerPlugin extends Plugin
     {
         return [
             'onPluginsInitialized' => ['onPluginsInitialized', 0],
+            'onApiRegisterRoutes'  => ['onApiRegisterRoutes', 0],
+            'onApiSidebarItems'    => ['onApiSidebarItems', 0],
         ];
+    }
+
+    /**
+     * Admin2 counterpart to onAdminMenu() below.
+     */
+    public function onApiSidebarItems(Event $event): void
+    {
+        if (!$this->config->get('plugins.easy-content-manager.enabled', true)) {
+            return;
+        }
+
+        // Permission filtering happens API-side (SidebarController checks
+        // `authorize` against the requesting user) — canManage() below is
+        // admin-classic-specific (admin.* namespace) and doesn't apply here.
+        $items = $event['items'] ?? [];
+        $items[] = [
+            'id'        => 'easy-content-manager',
+            'plugin'    => 'easy-content-manager',
+            'label'     => 'Content Manager',
+            'icon'      => 'fa-list',
+            'route'     => '/plugin/easy-content-manager',
+            'priority'  => 85,
+            'authorize' => ['api.pages.read', 'api.super'],
+        ];
+        $event['items'] = $items;
+    }
+
+    /**
+     * Admin2 counterpart to the onAdminTaskExecute 'ecmlistcontent' handler
+     * below — same query logic, moved to a REST controller (see
+     * classes/EasyContentManagerApiController.php) since admin-next doesn't
+     * run the admin-classic task pipeline. Deletion is not re-registered
+     * here: the admin-next page component calls the generic
+     * DELETE /pages/{route} instead (see that controller's docblock).
+     */
+    public function onApiRegisterRoutes(Event $event): void
+    {
+        if (!$this->config->get('plugins.easy-content-manager.enabled', true)) {
+            return;
+        }
+
+        $routes = $event['routes'];
+        $routes->get('/easy-content-manager/rows', [EasyContentManagerApiController::class, 'rows']);
     }
 
     public function onPluginsInitialized(): void
     {
+        // Required unconditionally (before the isAdmin() early-return below)
+        // so it runs on every request, API included. onApiRegisterRoutes
+        // only fires while FastRoute builds its (cached) route table — a
+        // regular API request just replays that cache and calls
+        // `new EasyContentManagerApiController(...)` directly at dispatch
+        // time, so the class needs to already be loaded by then. A
+        // top-level require at file scope is too early instead: Grav
+        // include_once's every plugin's main file well before the api
+        // plugin's own classes are loadable, to discover its blueprint —
+        // that crashes with "AbstractApiController not found".
+        require_once __DIR__ . '/classes/EasyContentManagerApiController.php';
+
         if (!$this->isAdmin()) {
             return;
         }
