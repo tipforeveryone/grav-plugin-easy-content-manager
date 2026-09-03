@@ -19,7 +19,43 @@ const API_BASE = (window.__GRAV_API_SERVER_URL || '') + (window.__GRAV_API_PREFI
 // '/admin2' is this site's configured route (user/config/plugins/admin2.yaml)
 // — only used as a fallback if that global is ever missing.
 const APP_BASE = window.__GRAV_CONFIG__?.basePath || '/admin2';
-const API_TOKEN = window.__GRAV_API_TOKEN;
+// window.__GRAV_API_TOKEN is only a one-time snapshot from when admin2 first
+// imports this page component — it's never updated afterwards even though
+// the host app keeps rotating the real access token in localStorage on
+// every silent refresh, so a page left open across a token rotation would
+// send a now-stale token and get a bare 401. currentAccessToken() re-reads
+// the live token from the same localStorage key the host app itself writes
+// to (see ftp-sync's admin-next/pages/ftp-sync.js for the fuller writeup —
+// this plugin hit the same bug).
+const API_TOKEN_FALLBACK = window.__GRAV_API_TOKEN;
+
+function currentAccessToken() {
+    try {
+        const keys = ['grav_admin_auth::/admin2', 'grav_admin_auth'];
+        for (const key of keys) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed.accessToken === 'string' && parsed.accessToken) {
+                    return parsed.accessToken;
+                }
+            }
+        }
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.indexOf('grav_admin_auth') === 0) {
+                const raw = localStorage.getItem(key);
+                const parsed = raw ? JSON.parse(raw) : null;
+                if (parsed && typeof parsed.accessToken === 'string' && parsed.accessToken) {
+                    return parsed.accessToken;
+                }
+            }
+        }
+    } catch (e) {
+        // localStorage unavailable -> fall back to the load-time snapshot.
+    }
+    return API_TOKEN_FALLBACK;
+}
 
 class EasyContentManagerPage extends HTMLElement {
     constructor() {
@@ -41,11 +77,12 @@ class EasyContentManagerPage extends HTMLElement {
     }
 
     async _fetch(path, options = {}) {
+        const token = currentAccessToken();
         const res = await fetch(API_BASE + path, {
             ...options,
             headers: {
                 'Content-Type': 'application/json',
-                ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...(options.headers || {}),
             },
         });
