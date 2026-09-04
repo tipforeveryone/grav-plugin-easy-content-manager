@@ -85,6 +85,16 @@
         #ecm-app table.overview-list th.ecm-col-narrow {
             flex: 0 0 8rem;
         }
+        #ecm-app table.overview-list td.ecm-col-check,
+        #ecm-app table.overview-list th.ecm-col-check {
+            flex: 0 0 2.5rem;
+            text-align: center;
+        }
+        #ecm-app table.overview-list td.ecm-col-check {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
         #ecm-app table.overview-list td.ecm-col-action,
         #ecm-app table.overview-list th.ecm-col-action {
             flex: 0 0 4.5rem;
@@ -94,6 +104,11 @@
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+        #ecm-app .ecm-bulk-bar { margin-top: 1rem; }
+        #ecm-app .ecm-bulk-bar #ecm-selected-count {
+            color: #555;
+            font-weight: 600;
         }
         #ecm-app table.overview-list td,
         #ecm-app table.overview-list th {
@@ -184,9 +199,27 @@
 
     <div id="ecm-status"></div>
 
+    {# Khối 3: chọn nhiều dòng + áp dụng hành động hàng loạt (xoá / đặt private) lên các dòng đã chọn. #}
+    <div class="ecm-filters ecm-bulk-bar">
+        <div class="ecm-filter-item">
+            <button type="button" class="button" id="ecm-select-translations">Chọn các bản dịch</button>
+        </div>
+        <div class="ecm-filter-item">
+            <label for="ecm-bulk-action">Áp dụng cho đã chọn</label>
+            <select id="ecm-bulk-action">
+                <option value="">-- Chọn hành động --</option>
+                <option value="delete">Xoá</option>
+                <option value="private">Đánh dấu Private</option>
+            </select>
+        </div>
+        <button type="button" class="button primary" id="ecm-apply-btn">Áp dụng</button>
+        <span id="ecm-selected-count"></span>
+    </div>
+
     <table id="ecm-table" class="overview-list">
         <thead>
             <tr>
+                <th class="ecm-col-check"><input type="checkbox" id="ecm-select-all"></th>
                 <th class="ecm-col-narrow">Type</th>
                 {% if slms_active %}
                 <th class="ecm-col-narrow">Language</th>
@@ -240,9 +273,35 @@
     var prevPageBtn = document.getElementById('ecm-prev-page');
     var nextPageBtn = document.getElementById('ecm-next-page');
     var pageLabel = document.getElementById('ecm-page-label');
+    var selectAllCheckbox = document.getElementById('ecm-select-all');
+    var selectTranslationsBtn = document.getElementById('ecm-select-translations');
+    var bulkActionSelect = document.getElementById('ecm-bulk-action');
+    var applyBtn = document.getElementById('ecm-apply-btn');
+    var selectedCountEl = document.getElementById('ecm-selected-count');
 
     var allRows = [];
     var currentPage = 1;
+    var selectedRoutes = new Set();
+
+    function currentPageRows() {
+        var start = (currentPage - 1) * pageSize();
+        return allRows.slice(start, start + pageSize());
+    }
+
+    function updateSelectAllState(pageRows) {
+        if (!pageRows || pageRows.length === 0) {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = false;
+            return;
+        }
+        var selectedCount = pageRows.filter(function (r) { return selectedRoutes.has(r.route); }).length;
+        selectAllCheckbox.checked = selectedCount === pageRows.length;
+        selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < pageRows.length;
+    }
+
+    function updateSelectedCount() {
+        selectedCountEl.textContent = selectedRoutes.size > 0 ? selectedRoutes.size + ' đã chọn' : '';
+    }
 
     function setStatus(message, isError) {
         statusEl.textContent = message || '';
@@ -268,7 +327,7 @@
             var tr = document.createElement('tr');
             var td = document.createElement('td');
             td.className = 'ecm-empty';
-            td.colSpan = slmsActive ? 8 : 6;
+            td.colSpan = (slmsActive ? 8 : 6) + 1;
             td.textContent = 'Không có content nào khớp bộ lọc.';
             tr.appendChild(td);
             tbody.appendChild(tr);
@@ -277,6 +336,16 @@
 
         rows.forEach(function (row) {
             var tr = document.createElement('tr');
+
+            var tdCheck = document.createElement('td');
+            tdCheck.className = 'ecm-col-check';
+            var checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'ecm-row-check';
+            checkbox.dataset.route = row.route;
+            checkbox.checked = selectedRoutes.has(row.route);
+            tdCheck.appendChild(checkbox);
+            tr.appendChild(tdCheck);
 
             var tdType = document.createElement('td');
             tdType.className = 'ecm-col-narrow';
@@ -379,8 +448,10 @@
         if (currentPage > pages) { currentPage = pages; }
         if (currentPage < 1) { currentPage = 1; }
 
-        var start = (currentPage - 1) * pageSize();
-        renderRows(allRows.slice(start, start + pageSize()));
+        var pageRows = currentPageRows();
+        renderRows(pageRows);
+        updateSelectAllState(pageRows);
+        updateSelectedCount();
 
         pageLabel.textContent = 'Trang ' + currentPage + ' / ' + pages;
         prevPageBtn.disabled = currentPage <= 1;
@@ -406,6 +477,7 @@
             }
             allRows = data.rows || [];
             currentPage = 1;
+            selectedRoutes.clear();
             renderPage();
             setStatus(allRows.length + ' content.', false);
         }).catch(function (e) {
@@ -457,6 +529,107 @@
         }).catch(function (e) {
             setStatus('Error: ' + e, true);
         });
+    });
+
+    tbody.addEventListener('change', function (e) {
+        var cb = e.target.closest('input.ecm-row-check');
+        if (!cb) { return; }
+
+        if (cb.checked) {
+            selectedRoutes.add(cb.dataset.route);
+        } else {
+            selectedRoutes.delete(cb.dataset.route);
+        }
+        updateSelectAllState(currentPageRows());
+        updateSelectedCount();
+    });
+
+    selectAllCheckbox.addEventListener('change', function () {
+        var pageRows = currentPageRows();
+        pageRows.forEach(function (r) {
+            if (selectAllCheckbox.checked) {
+                selectedRoutes.add(r.route);
+            } else {
+                selectedRoutes.delete(r.route);
+            }
+        });
+        renderPage();
+    });
+
+    // "Chọn các bản dịch": với mỗi dòng đang được chọn, tự chọn thêm các bản
+    // dịch của nó — nhưng chỉ những bản dịch đang hiển thị trong tập đã lọc
+    // hiện tại (allRows). Nếu bộ lọc Language đang thu hẹp danh sách chỉ còn
+    // 1 ngôn ngữ thì bản dịch (ngôn ngữ khác) sẽ không có trong allRows và
+    // không thể tự chọn được — bỏ filter Language để dùng tính năng này.
+    selectTranslationsBtn.addEventListener('click', function () {
+        var routeIndex = {};
+        allRows.forEach(function (r) { routeIndex[r.route] = true; });
+
+        Array.from(selectedRoutes).forEach(function (route) {
+            var row = allRows.filter(function (r) { return r.route === route; })[0];
+            if (!row || !row.translations) { return; }
+            Object.keys(row.translations).forEach(function (lang) {
+                var targetRoute = row.translations[lang];
+                if (routeIndex[targetRoute]) {
+                    selectedRoutes.add(targetRoute);
+                }
+            });
+        });
+
+        renderPage();
+    });
+
+    applyBtn.addEventListener('click', function () {
+        var action = bulkActionSelect.value;
+        if (!action) {
+            window.alert('Hãy chọn 1 hành động.');
+            return;
+        }
+
+        var routes = Array.from(selectedRoutes);
+        if (routes.length === 0) {
+            window.alert('Chưa chọn bài viết nào.');
+            return;
+        }
+
+        var actionLabel = action === 'delete' ? 'XOÁ' : 'ĐÁNH DẤU PRIVATE';
+        if (!window.confirm(actionLabel + ' ' + routes.length + ' bài viết đã chọn? Thao tác xoá không thể hoàn tác.')) {
+            return;
+        }
+
+        var task = action === 'delete' ? 'ecmdeletecontent' : 'ecmsetprivate';
+        applyBtn.disabled = true;
+        setStatus('Đang xử lý ' + routes.length + ' bài viết...', false);
+
+        var done = 0;
+        var failed = [];
+
+        function next() {
+            if (done >= routes.length) {
+                applyBtn.disabled = false;
+                if (failed.length > 0) {
+                    setStatus('Hoàn tất với ' + failed.length + ' lỗi: ' + failed.join(', '), true);
+                } else {
+                    setStatus('Đã áp dụng cho ' + routes.length + ' bài viết.', false);
+                }
+                loadContent();
+                return;
+            }
+
+            var route = routes[done];
+            post(task, { route: route }).then(function (data) {
+                if (data.status !== 'success') {
+                    failed.push(route + ' (' + (data.message || 'lỗi') + ')');
+                }
+            }).catch(function (e) {
+                failed.push(route + ' (' + e + ')');
+            }).then(function () {
+                done++;
+                next();
+            });
+        }
+
+        next();
     });
 
     restoreFilters();

@@ -247,6 +247,9 @@ class EasyContentManagerPlugin extends Plugin
         } elseif ($task === 'ecmdeletecontent') {
             $event->stopPropagation();
             $this->handleDeleteContent($controller->post ?? []);
+        } elseif ($task === 'ecmsetprivate') {
+            $event->stopPropagation();
+            $this->handleSetPrivate($controller->post ?? []);
         }
     }
 
@@ -302,12 +305,14 @@ class EasyContentManagerPlugin extends Plugin
 
                 $pageLanguage = null;
                 $translationStatus = null;
+                $translationRoutes = [];
                 if ($slms['active']) {
                     $pageLanguage = $this->slmsPageLanguage($page, $slms);
                     if ($language !== '' && $language !== $pageLanguage) {
                         continue;
                     }
                     $translationStatus = $this->slmsTranslationStatus($page, $pageLanguage, $slms);
+                    $translationRoutes = $this->slmsTranslationRoutes($page, $pageLanguage, $slms);
                 }
 
                 $title = (string) $page->title();
@@ -327,6 +332,7 @@ class EasyContentManagerPlugin extends Plugin
                     'language' => $pageLanguage,
                     'language_label' => $pageLanguage !== null ? ($slms['languages'][$pageLanguage] ?? $pageLanguage) : null,
                     'translation' => $translationStatus,
+                    'translations' => $translationRoutes,
                     'title' => $title,
                     'date' => date('Y-m-d', $page->date()),
                     'slug' => '/' . ltrim((string) $page->route(), '/'),
@@ -384,6 +390,45 @@ class EasyContentManagerPlugin extends Plugin
             } else {
                 Folder::delete($page->path());
             }
+
+            Cache::clearCache('invalidate');
+
+            $this->grav['admin']->json_response = ['status' => 'success'];
+        } catch (\Throwable $e) {
+            $this->jsonError($e->getMessage());
+        }
+    }
+
+    private function handleSetPrivate(array $post): void
+    {
+        if (!$this->canManage()) {
+            $this->jsonError('Not authorized.');
+
+            return;
+        }
+
+        $route = '/' . ltrim((string) ($post['route'] ?? ''), '/');
+        if ($route === '/') {
+            $this->jsonError('Missing route.');
+
+            return;
+        }
+
+        $pages = $this->grav['pages'];
+        $pages->enablePages();
+
+        $page = $pages->find($route, true);
+        if (!$page) {
+            $this->jsonError('Content not found.');
+
+            return;
+        }
+
+        try {
+            $header = (array) $page->header();
+            $header['private'] = true;
+            $page->header((object) $header);
+            $page->save();
 
             Cache::clearCache('invalidate');
 
@@ -473,6 +518,31 @@ class EasyContentManagerPlugin extends Plugin
         }
 
         return 'Thiếu bản dịch: ' . implode(', ', $missing);
+    }
+
+    /**
+     * @return array<string, string> code => route (chỉ những bản dịch có
+     * trang đích thực sự tồn tại), dùng cho nút "Chọn các bản dịch" ở phía
+     * client (khớp route này với các dòng đang hiển thị trong bảng).
+     */
+    private function slmsTranslationRoutes(PageInterface $page, string $pageLanguage, array $slms): array
+    {
+        $translations = (array) ($page->header()->smls_translations ?? []);
+        $pages = $this->grav['pages'];
+
+        $routes = [];
+        foreach ($slms['languages'] as $code => $label) {
+            if ($code === $pageLanguage) {
+                continue;
+            }
+            $route = trim((string) ($translations[$code] ?? ''));
+            $target = $route !== '' ? $pages->find($route) : null;
+            if ($target) {
+                $routes[$code] = '/' . ltrim((string) $target->rawRoute(), '/');
+            }
+        }
+
+        return $routes;
     }
 
     /**

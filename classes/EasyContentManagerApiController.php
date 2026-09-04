@@ -78,12 +78,14 @@ class EasyContentManagerApiController extends AbstractApiController
 
             $pageLanguage = null;
             $translationStatus = null;
+            $translationRoutes = [];
             if ($slms['active']) {
                 $pageLanguage = $this->slmsPageLanguage($page, $slms);
                 if ($language !== '' && $language !== $pageLanguage) {
                     continue;
                 }
                 $translationStatus = $this->slmsTranslationStatus($page, $pageLanguage, $slms);
+                $translationRoutes = $this->slmsTranslationRoutes($page, $pageLanguage, $slms);
             }
 
             $title = (string) $page->title();
@@ -103,6 +105,7 @@ class EasyContentManagerApiController extends AbstractApiController
                 'language' => $pageLanguage,
                 'language_label' => $pageLanguage !== null ? ($slms['languages'][$pageLanguage] ?? $pageLanguage) : null,
                 'translation' => $translationStatus,
+                'translations' => $translationRoutes,
                 'title' => $title,
                 'date' => date('Y-m-d', $page->date()),
                 'route' => '/' . ltrim((string) $page->rawRoute(), '/'),
@@ -195,6 +198,31 @@ class EasyContentManagerApiController extends AbstractApiController
         }
 
         return 'Thiếu bản dịch: ' . implode(', ', $missing);
+    }
+
+    /**
+     * @return array<string, string> code => route (chỉ những bản dịch có
+     * trang đích thực sự tồn tại), dùng cho nút "Chọn các bản dịch" ở phía
+     * client (khớp route này với các dòng đang hiển thị trong bảng).
+     */
+    private function slmsTranslationRoutes(PageInterface $page, string $pageLanguage, array $slms): array
+    {
+        $translations = (array) ($page->header()->smls_translations ?? []);
+        $pages = $this->grav['pages'];
+
+        $routes = [];
+        foreach ($slms['languages'] as $code => $label) {
+            if ($code === $pageLanguage) {
+                continue;
+            }
+            $route = trim((string) ($translations[$code] ?? ''));
+            $target = $route !== '' ? $pages->find($route) : null;
+            if ($target) {
+                $routes[$code] = '/' . ltrim((string) $target->rawRoute(), '/');
+            }
+        }
+
+        return $routes;
     }
 
     private function searchScore(string $title, string $query): int
