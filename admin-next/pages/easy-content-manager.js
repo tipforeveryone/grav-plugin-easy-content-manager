@@ -66,6 +66,7 @@ class EasyContentManagerPage extends HTMLElement {
         this._slmsActive = false;
         this._filters = { type: '', language: '', q: '' };
         this._searchDebounce = null;
+        this._selected = new Set();
     }
 
     connectedCallback() {
@@ -88,7 +89,7 @@ class EasyContentManagerPage extends HTMLElement {
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
-            throw new Error(body?.error?.message || body?.message || `Request failed (${res.status})`);
+            throw new Error(body?.detail || body?.error?.message || body?.message || `Request failed (${res.status})`);
         }
         return body;
     }
@@ -100,7 +101,7 @@ class EasyContentManagerPage extends HTMLElement {
         if (this._filters.q) params.set('q', this._filters.q);
 
         const tbody = this.querySelector('.ecm-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="6">Đang tải…</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="7">Đang tải…</td></tr>`;
 
         try {
             const res = await this._fetch(`/easy-content-manager/rows?${params.toString()}`);
@@ -109,11 +110,12 @@ class EasyContentManagerPage extends HTMLElement {
             this._typeOptions = data.type_options ?? {};
             this._languageOptions = data.language_options ?? {};
             this._slmsActive = !!data.slms_active;
+            this._selected = new Set();
             this._renderShell();
             this._renderRows();
         } catch (err) {
             if (tbody) {
-                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="6">${this._escape(err.message || 'Load failed')}</td></tr>`;
+                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="7">${this._escape(err.message || 'Load failed')}</td></tr>`;
             }
         }
     }
@@ -126,6 +128,7 @@ class EasyContentManagerPage extends HTMLElement {
         try {
             await this._fetch(`/pages${row.route}`, { method: 'DELETE' });
             this._rows = this._rows.filter((r) => r.route !== row.route);
+            this._selected.delete(row.route);
             trEl.remove();
         } catch (err) {
             trEl.style.opacity = '1';
@@ -165,9 +168,20 @@ class EasyContentManagerPage extends HTMLElement {
                     ` : ''}
                     <input type="search" class="ecm-search" data-role="search" placeholder="Tìm theo tiêu đề…" value="${this._escape(this._filters.q)}" />
                 </div>
+                <div class="ecm-bulk-bar">
+                    <button type="button" class="ecm-btn" data-role="select-translations">Chọn các bản dịch</button>
+                    <select class="ecm-select" data-role="bulk-action">
+                        <option value="">-- Chọn hành động --</option>
+                        <option value="delete">Xoá</option>
+                        <option value="private">Đánh dấu Private</option>
+                    </select>
+                    <button type="button" class="ecm-btn ecm-btn-primary" data-role="apply-bulk">Áp dụng</button>
+                    <span class="ecm-selected-count" data-role="selected-count"></span>
+                </div>
                 <table class="ecm-table">
                     <thead>
                         <tr>
+                            <th class="ecm-th-check"><input type="checkbox" data-role="select-all" /></th>
                             <th>Tiêu đề</th>
                             <th>Loại</th>
                             ${this._slmsActive ? '<th>Ngôn ngữ</th><th>Bản dịch</th>' : ''}
@@ -199,6 +213,105 @@ class EasyContentManagerPage extends HTMLElement {
                 this._load();
             }, 300);
         });
+
+        const selectAllCheckbox = this.querySelector('[data-role="select-all"]');
+        selectAllCheckbox?.addEventListener('change', () => {
+            if (selectAllCheckbox.checked) {
+                this._rows.forEach((r) => this._selected.add(r.route));
+            } else {
+                this._selected.clear();
+            }
+            this._renderRows();
+        });
+
+        const selectTranslationsBtn = this.querySelector('[data-role="select-translations"]');
+        selectTranslationsBtn?.addEventListener('click', () => this._selectTranslations());
+
+        const applyBtn = this.querySelector('[data-role="apply-bulk"]');
+        applyBtn?.addEventListener('click', () => this._applyBulkAction());
+    }
+
+    // "Chọn các bản dịch": với mỗi dòng đang được chọn, tự chọn thêm các bản
+    // dịch của nó — nhưng chỉ những bản dịch đang có trong this._rows (tập
+    // đã lọc hiện tại). Nếu filter Ngôn ngữ đang thu hẹp danh sách chỉ còn 1
+    // ngôn ngữ thì bản dịch (ngôn ngữ khác) sẽ không nằm trong this._rows và
+    // không thể tự chọn được — bỏ filter Ngôn ngữ để dùng tính năng này.
+    _selectTranslations() {
+        const routeIndex = new Set(this._rows.map((r) => r.route));
+        Array.from(this._selected).forEach((route) => {
+            const row = this._rows.find((r) => r.route === route);
+            if (!row || !row.translations) return;
+            Object.values(row.translations).forEach((targetRoute) => {
+                if (routeIndex.has(targetRoute)) {
+                    this._selected.add(targetRoute);
+                }
+            });
+        });
+        this._renderRows();
+    }
+
+    async _applyBulkAction() {
+        const select = this.querySelector('[data-role="bulk-action"]');
+        const action = select?.value;
+        if (!action) {
+            window.alert('Hãy chọn 1 hành động.');
+            return;
+        }
+
+        const routes = Array.from(this._selected);
+        if (routes.length === 0) {
+            window.alert('Chưa chọn bài viết nào.');
+            return;
+        }
+
+        const actionLabel = action === 'delete' ? 'XOÁ' : 'ĐÁNH DẤU PRIVATE';
+        if (!window.confirm(`${actionLabel} ${routes.length} bài viết đã chọn? Thao tác xoá không thể hoàn tác.`)) {
+            return;
+        }
+
+        const applyBtn = this.querySelector('[data-role="apply-bulk"]');
+        if (applyBtn) applyBtn.disabled = true;
+
+        const failed = [];
+        for (const route of routes) {
+            try {
+                if (action === 'delete') {
+                    await this._fetch(`/pages${route}`, { method: 'DELETE' });
+                } else {
+                    await this._fetch(`/pages${route}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ header: { private: true } }),
+                    });
+                }
+            } catch (err) {
+                failed.push(`${route} (${err.message || 'lỗi'})`);
+            }
+        }
+
+        if (applyBtn) applyBtn.disabled = false;
+        if (failed.length > 0) {
+            window.alert(`Hoàn tất với ${failed.length} lỗi:\n${failed.join('\n')}`);
+        }
+        this._selected.clear();
+        this._load();
+    }
+
+    _updateSelectAllState() {
+        const checkbox = this.querySelector('[data-role="select-all"]');
+        if (!checkbox) return;
+        if (this._rows.length === 0) {
+            checkbox.checked = false;
+            checkbox.indeterminate = false;
+            return;
+        }
+        const selectedCount = this._rows.filter((r) => this._selected.has(r.route)).length;
+        checkbox.checked = selectedCount === this._rows.length;
+        checkbox.indeterminate = selectedCount > 0 && selectedCount < this._rows.length;
+    }
+
+    _updateSelectedCount() {
+        const el = this.querySelector('[data-role="selected-count"]');
+        if (el) el.textContent = this._selected.size > 0 ? `${this._selected.size} đã chọn` : '';
     }
 
     _renderRows() {
@@ -206,12 +319,15 @@ class EasyContentManagerPage extends HTMLElement {
         if (!tbody) return;
 
         if (this._rows.length === 0) {
-            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="6">Không có nội dung khớp.</td></tr>`;
+            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="7">Không có nội dung khớp.</td></tr>`;
+            this._updateSelectAllState();
+            this._updateSelectedCount();
             return;
         }
 
         tbody.innerHTML = this._rows.map((row, i) => `
             <tr data-index="${i}">
+                <td class="ecm-td-check"><input type="checkbox" class="ecm-row-check" data-route="${this._escape(row.route)}" ${this._selected.has(row.route) ? 'checked' : ''} /></td>
                 <td class="ecm-title">
                     ${this._escape(row.title)}
                     <div class="ecm-route">
@@ -236,7 +352,20 @@ class EasyContentManagerPage extends HTMLElement {
             const row = this._rows[Number(trEl.dataset.index)];
             trEl.querySelector('[data-action="delete"]')?.addEventListener('click', () => this._deleteRow(row, trEl));
             trEl.querySelector('[data-action="copy"]')?.addEventListener('click', (e) => this._copyRoute(row.route, e.target));
+            const checkbox = trEl.querySelector('.ecm-row-check');
+            checkbox?.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    this._selected.add(row.route);
+                } else {
+                    this._selected.delete(row.route);
+                }
+                this._updateSelectAllState();
+                this._updateSelectedCount();
+            });
         });
+
+        this._updateSelectAllState();
+        this._updateSelectedCount();
     }
 
     _escape(str) {
@@ -250,6 +379,12 @@ class EasyContentManagerPage extends HTMLElement {
             <style>
                 .ecm-wrapper { display: flex; flex-direction: column; gap: 12px; font-family: inherit; padding: 4px; }
                 .ecm-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+                .ecm-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+                .ecm-btn { display: inline-block; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; color: var(--foreground, #1f2937); }
+                .ecm-btn:hover { opacity: 0.8; }
+                .ecm-btn-primary { color: #fff; background: var(--primary, #3b82f6); border-color: var(--primary, #3b82f6); }
+                .ecm-selected-count { font-size: 13px; font-weight: 600; color: var(--muted-foreground, #6b7280); }
+                .ecm-th-check, .ecm-td-check { width: 2rem; text-align: center; }
                 .ecm-select, .ecm-search { border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: 6px 10px; font-size: 13px; background: var(--card, #fff); color: var(--foreground, #1f2937); }
                 .ecm-search { flex: 1; min-width: 180px; }
                 .ecm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
