@@ -67,6 +67,7 @@ class EasyContentManagerPage extends HTMLElement {
         this._filters = { type: '', language: '', q: '' };
         this._searchDebounce = null;
         this._selected = new Set();
+        this._sort = { field: null, dir: 'asc' };
     }
 
     connectedCallback() {
@@ -101,7 +102,7 @@ class EasyContentManagerPage extends HTMLElement {
         if (this._filters.q) params.set('q', this._filters.q);
 
         const tbody = this.querySelector('.ecm-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="7">Đang tải…</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="8">Đang tải…</td></tr>`;
 
         try {
             const res = await this._fetch(`/easy-content-manager/rows?${params.toString()}`);
@@ -111,11 +112,12 @@ class EasyContentManagerPage extends HTMLElement {
             this._languageOptions = data.language_options ?? {};
             this._slmsActive = !!data.slms_active;
             this._selected = new Set();
+            this._applySort();
             this._renderShell();
             this._renderRows();
         } catch (err) {
             if (tbody) {
-                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="7">${this._escape(err.message || 'Load failed')}</td></tr>`;
+                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="8">${this._escape(err.message || 'Load failed')}</td></tr>`;
             }
         }
     }
@@ -185,7 +187,8 @@ class EasyContentManagerPage extends HTMLElement {
                             <th>Tiêu đề</th>
                             <th>Loại</th>
                             ${this._slmsActive ? '<th>Ngôn ngữ</th><th>Bản dịch</th>' : ''}
-                            <th>Ngày</th>
+                            ${this._sortableHeader('Ngày đăng', 'date_ts')}
+                            ${this._sortableHeader('Ngày sửa', 'modified_ts')}
                             <th></th>
                         </tr>
                     </thead>
@@ -229,6 +232,39 @@ class EasyContentManagerPage extends HTMLElement {
 
         const applyBtn = this.querySelector('[data-role="apply-bulk"]');
         applyBtn?.addEventListener('click', () => this._applyBulkAction());
+
+        this.querySelectorAll('[data-sort-field]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sortField;
+                if (this._sort.field === field) {
+                    this._sort.dir = this._sort.dir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this._sort.field = field;
+                    this._sort.dir = 'desc';
+                }
+                this._applySort();
+                this._renderShell();
+                this._renderRows();
+            });
+        });
+    }
+
+    _sortableHeader(label, field) {
+        const isActive = this._sort.field === field;
+        const arrow = isActive ? (this._sort.dir === 'asc' ? '▲' : '▼') : '';
+        return `<th class="ecm-th-sortable ${isActive ? 'ecm-sort-active' : ''}" data-sort-field="${field}">${label}<span class="ecm-sort-arrow">${arrow}</span></th>`;
+    }
+
+    _applySort() {
+        const field = this._sort.field;
+        if (!field) return;
+        const dir = this._sort.dir === 'asc' ? 1 : -1;
+        this._rows.sort((a, b) => {
+            const av = a[field] || 0;
+            const bv = b[field] || 0;
+            if (av === bv) return 0;
+            return av < bv ? -dir : dir;
+        });
     }
 
     // "Chọn các bản dịch": với mỗi dòng đang được chọn, tự chọn thêm các bản
@@ -319,7 +355,7 @@ class EasyContentManagerPage extends HTMLElement {
         if (!tbody) return;
 
         if (this._rows.length === 0) {
-            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="7">Không có nội dung khớp.</td></tr>`;
+            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="8">Không có nội dung khớp.</td></tr>`;
             this._updateSelectAllState();
             this._updateSelectedCount();
             return;
@@ -341,6 +377,7 @@ class EasyContentManagerPage extends HTMLElement {
                     <td class="${row.translation === 'OK' ? 'ecm-ok' : 'ecm-missing'}">${this._escape(row.translation || '—')}</td>
                 ` : ''}
                 <td>${this._escape(row.date)}</td>
+                <td>${this._escape(row.modified)}</td>
                 <td class="ecm-actions">
                     <a class="ecm-edit-btn" href="${this._escape(APP_BASE)}/pages/edit${this._escape(row.route)}">Sửa</a>
                     <button type="button" class="ecm-delete-btn" data-action="delete">Xoá</button>
@@ -385,6 +422,10 @@ class EasyContentManagerPage extends HTMLElement {
                 .ecm-btn-primary { color: #fff; background: var(--primary, #3b82f6); border-color: var(--primary, #3b82f6); }
                 .ecm-selected-count { font-size: 13px; font-weight: 600; color: var(--muted-foreground, #6b7280); }
                 .ecm-th-check, .ecm-td-check { width: 2rem; text-align: center; }
+                .ecm-th-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+                .ecm-th-sortable:hover { color: var(--foreground, #1f2937); }
+                .ecm-th-sortable .ecm-sort-arrow { margin-left: 4px; color: var(--muted-foreground, #6b7280); }
+                .ecm-th-sortable.ecm-sort-active .ecm-sort-arrow { color: inherit; }
                 .ecm-select, .ecm-search { border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: 6px 10px; font-size: 13px; background: var(--card, #fff); color: var(--foreground, #1f2937); }
                 .ecm-search { flex: 1; min-width: 180px; }
                 .ecm-table { width: 100%; border-collapse: collapse; font-size: 13px; }

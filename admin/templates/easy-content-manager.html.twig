@@ -130,6 +130,22 @@
             color: #777;
         }
 
+        #ecm-app table.overview-list th.ecm-sortable {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        #ecm-app table.overview-list th.ecm-sortable:hover {
+            color: #000;
+        }
+        #ecm-app table.overview-list th.ecm-sortable .ecm-sort-arrow {
+            margin-left: 0.25rem;
+            color: #999;
+        }
+        #ecm-app table.overview-list th.ecm-sortable.ecm-sort-active .ecm-sort-arrow {
+            color: inherit;
+        }
+
         #ecm-app .ecm-pagination {
             display: flex;
             flex-wrap: wrap;
@@ -226,7 +242,8 @@
                 <th>Translation</th>
                 {% endif %}
                 <th>Title</th>
-                <th class="ecm-col-narrow">Ngày đăng</th>
+                <th class="ecm-col-narrow ecm-sortable" data-sort-field="date_ts">Ngày đăng<span class="ecm-sort-arrow"></span></th>
+                <th class="ecm-col-narrow ecm-sortable" data-sort-field="modified_ts">Ngày sửa<span class="ecm-sort-arrow"></span></th>
                 <th>Slug</th>
                 <th class="ecm-col-action">Edit</th>
                 <th class="ecm-col-action">Delete</th>
@@ -278,10 +295,33 @@
     var bulkActionSelect = document.getElementById('ecm-bulk-action');
     var applyBtn = document.getElementById('ecm-apply-btn');
     var selectedCountEl = document.getElementById('ecm-selected-count');
+    var sortHeaders = table.querySelectorAll('th.ecm-sortable');
 
     var allRows = [];
     var currentPage = 1;
     var selectedRoutes = new Set();
+    var sortField = null;
+    var sortDir = 'asc';
+
+    function applySort() {
+        if (!sortField) { return; }
+        var dir = sortDir === 'asc' ? 1 : -1;
+        allRows.sort(function (a, b) {
+            var av = a[sortField] || 0;
+            var bv = b[sortField] || 0;
+            if (av === bv) { return 0; }
+            return av < bv ? -dir : dir;
+        });
+    }
+
+    function updateSortHeaders() {
+        sortHeaders.forEach(function (th) {
+            var isActive = th.dataset.sortField === sortField;
+            th.classList.toggle('ecm-sort-active', isActive);
+            var arrow = th.querySelector('.ecm-sort-arrow');
+            arrow.textContent = isActive ? (sortDir === 'asc' ? '▲' : '▼') : '';
+        });
+    }
 
     function currentPageRows() {
         var start = (currentPage - 1) * pageSize();
@@ -327,7 +367,7 @@
             var tr = document.createElement('tr');
             var td = document.createElement('td');
             td.className = 'ecm-empty';
-            td.colSpan = (slmsActive ? 8 : 6) + 1;
+            td.colSpan = (slmsActive ? 8 : 6) + 2;
             td.textContent = 'Không có content nào khớp bộ lọc.';
             tr.appendChild(td);
             tbody.appendChild(tr);
@@ -373,6 +413,11 @@
             tdDate.className = 'ecm-col-narrow';
             tdDate.textContent = row.date || '';
             tr.appendChild(tdDate);
+
+            var tdModified = document.createElement('td');
+            tdModified.className = 'ecm-col-narrow';
+            tdModified.textContent = row.modified || '';
+            tr.appendChild(tdModified);
 
             var tdSlug = document.createElement('td');
             tdSlug.className = 'ecm-slug';
@@ -478,6 +523,7 @@
             allRows = data.rows || [];
             currentPage = 1;
             selectedRoutes.clear();
+            applySort();
             renderPage();
             setStatus(allRows.length + ' content.', false);
         }).catch(function (e) {
@@ -542,6 +588,22 @@
         }
         updateSelectAllState(currentPageRows());
         updateSelectedCount();
+    });
+
+    sortHeaders.forEach(function (th) {
+        th.addEventListener('click', function () {
+            var field = th.dataset.sortField;
+            if (sortField === field) {
+                sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortField = field;
+                sortDir = 'desc';
+            }
+            applySort();
+            updateSortHeaders();
+            currentPage = 1;
+            renderPage();
+        });
     });
 
     selectAllCheckbox.addEventListener('change', function () {

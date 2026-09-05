@@ -108,6 +108,9 @@ class EasyContentManagerApiController extends AbstractApiController
                 'translations' => $translationRoutes,
                 'title' => $title,
                 'date' => date('Y-m-d', $page->date()),
+                'date_ts' => $page->date(),
+                'modified' => date('Y-m-d', $page->modified()),
+                'modified_ts' => $page->modified(),
                 'route' => '/' . ltrim((string) $page->rawRoute(), '/'),
             ];
         }
