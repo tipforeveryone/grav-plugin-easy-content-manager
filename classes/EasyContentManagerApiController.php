@@ -39,6 +39,7 @@ class EasyContentManagerApiController extends AbstractApiController
         $type = trim((string) ($query['type'] ?? ''));
         $language = trim((string) ($query['language'] ?? ''));
         $search = trim((string) ($query['q'] ?? ''));
+        $privateOnly = !empty($query['private_only']);
 
         $slms = $this->slmsInfo();
         $allowedTemplates = $this->allowedTemplates();
@@ -73,6 +74,9 @@ class EasyContentManagerApiController extends AbstractApiController
                 continue;
             }
             if ($type !== '' && $type !== $template) {
+                continue;
+            }
+            if ($privateOnly && empty($page->header()->private)) {
                 continue;
             }
 

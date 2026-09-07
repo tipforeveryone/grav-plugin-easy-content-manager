@@ -197,6 +197,9 @@
             </select>
         </div>
         {% endif %}
+        <div class="ecm-filter-item">
+            <label for="ecm-private-only"><input type="checkbox" id="ecm-private-only"> Private only</label>
+        </div>
         <button type="button" class="button primary" id="ecm-filter-btn">
             <i class="fa fa-filter"></i> Filter
         </button>
@@ -281,6 +284,7 @@
     var searchInput = document.getElementById('ecm-search');
     var typeSelect = document.getElementById('ecm-type');
     var languageSelect = document.getElementById('ecm-language');
+    var privateOnlyCheckbox = document.getElementById('ecm-private-only');
     var filterBtn = document.getElementById('ecm-filter-btn');
     var searchBtn = document.getElementById('ecm-search-btn');
     var statusEl = document.getElementById('ecm-status');
@@ -457,7 +461,8 @@
             var saved = {
                 type: typeSelect.value,
                 q: searchInput.value,
-                pageSize: pageSizeSelect.value
+                pageSize: pageSizeSelect.value,
+                privateOnly: privateOnlyCheckbox.checked
             };
             if (slmsActive && languageSelect) {
                 saved.language = languageSelect.value;
@@ -474,6 +479,7 @@
             if (saved.type !== undefined) { typeSelect.value = saved.type; }
             if (saved.q !== undefined) { searchInput.value = saved.q; }
             if (saved.pageSize !== undefined) { pageSizeSelect.value = saved.pageSize; }
+            if (saved.privateOnly !== undefined) { privateOnlyCheckbox.checked = saved.privateOnly; }
             if (slmsActive && languageSelect && saved.language !== undefined) {
                 languageSelect.value = saved.language;
             }
@@ -509,7 +515,8 @@
 
         var fields = {
             type: typeSelect.value,
-            q: searchInput.value
+            q: searchInput.value,
+            private_only: privateOnlyCheckbox.checked ? '1' : ''
         };
         if (slmsActive && languageSelect) {
             fields.language = languageSelect.value;

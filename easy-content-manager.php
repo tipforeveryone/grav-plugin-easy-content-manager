@@ -270,6 +270,7 @@ class EasyContentManagerPlugin extends Plugin
             $type = trim((string) ($post['type'] ?? ''));
             $language = trim((string) ($post['language'] ?? ''));
             $query = trim((string) ($post['q'] ?? ''));
+            $privateOnly = !empty($post['private_only']);
 
             $allowedTemplates = $this->allowedTemplates();
             if (empty($allowedTemplates)) {
@@ -300,6 +301,9 @@ class EasyContentManagerPlugin extends Plugin
                     continue;
                 }
                 if ($type !== '' && $type !== $template) {
+                    continue;
+                }
+                if ($privateOnly && empty($page->header()->private)) {
                     continue;
                 }
 

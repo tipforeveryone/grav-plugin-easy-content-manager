@@ -68,7 +68,7 @@ class EasyContentManagerPage extends HTMLElement {
         this._typeOptions = {};
         this._languageOptions = {};
         this._slmsActive = false;
-        this._filters = { type: '', language: '', q: '' };
+        this._filters = { type: '', language: '', q: '', privateOnly: false };
         this._searchDebounce = null;
         this._selected = new Set();
         this._sort = { field: 'date_ts', dir: 'desc' };
@@ -87,6 +87,7 @@ class EasyContentManagerPage extends HTMLElement {
             if (saved.type !== undefined) this._filters.type = saved.type;
             if (saved.language !== undefined) this._filters.language = saved.language;
             if (saved.q !== undefined) this._filters.q = saved.q;
+            if (saved.privateOnly !== undefined) this._filters.privateOnly = saved.privateOnly;
             if (saved.sortField !== undefined) this._sort.field = saved.sortField;
             if (saved.sortDir !== undefined) this._sort.dir = saved.sortDir;
         } catch (e) {
@@ -100,6 +101,7 @@ class EasyContentManagerPage extends HTMLElement {
                 type: this._filters.type,
                 language: this._filters.language,
                 q: this._filters.q,
+                privateOnly: this._filters.privateOnly,
                 sortField: this._sort.field,
                 sortDir: this._sort.dir,
             }));
@@ -138,6 +140,7 @@ class EasyContentManagerPage extends HTMLElement {
         if (this._filters.type) params.set('type', this._filters.type);
         if (this._filters.language) params.set('language', this._filters.language);
         if (this._filters.q) params.set('q', this._filters.q);
+        if (this._filters.privateOnly) params.set('private_only', '1');
 
         const tbody = this.querySelector('.ecm-tbody');
         if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="8">Đang tải…</td></tr>`;
@@ -207,6 +210,9 @@ class EasyContentManagerPage extends HTMLElement {
                         </select>
                     ` : ''}
                     <input type="search" class="ecm-search" data-role="search" placeholder="Tìm theo tiêu đề…" value="${this._escape(this._filters.q)}" />
+                    <label class="ecm-checkbox-label">
+                        <input type="checkbox" data-role="private-only" ${this._filters.privateOnly ? 'checked' : ''} /> Private only
+                    </label>
                 </div>
                 <div class="ecm-bulk-bar">
                     <button type="button" class="ecm-btn" data-role="select-translations">Chọn các bản dịch</button>
@@ -256,6 +262,12 @@ class EasyContentManagerPage extends HTMLElement {
                 this._saveFilters();
                 this._load();
             }, 300);
+        });
+        const privateOnlyCheckbox = this.querySelector('[data-role="private-only"]');
+        privateOnlyCheckbox?.addEventListener('change', (e) => {
+            this._filters.privateOnly = e.target.checked;
+            this._saveFilters();
+            this._load();
         });
 
         const selectAllCheckbox = this.querySelector('[data-role="select-all"]');
@@ -457,7 +469,8 @@ class EasyContentManagerPage extends HTMLElement {
         return `
             <style>
                 .ecm-wrapper { display: flex; flex-direction: column; gap: 12px; font-family: inherit; padding: 4px; }
-                .ecm-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+                .ecm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+                .ecm-checkbox-label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--foreground, #1f2937); cursor: pointer; white-space: nowrap; }
                 .ecm-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
                 .ecm-btn { display: inline-block; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; color: var(--foreground, #1f2937); }
                 .ecm-btn:hover { opacity: 0.8; }
