@@ -29,6 +29,10 @@ const APP_BASE = window.__GRAV_CONFIG__?.basePath || '/admin2';
 // this plugin hit the same bug).
 const API_TOKEN_FALLBACK = window.__GRAV_API_TOKEN;
 
+// Distinct from admin-classic's 'ecm-filters' localStorage key (different
+// shape, and localStorage is shared per-origin regardless of admin route).
+const FILTERS_STORAGE_KEY = 'ecm-admin2-filters';
+
 function currentAccessToken() {
     try {
         const keys = ['grav_admin_auth::/admin2', 'grav_admin_auth'];
@@ -67,7 +71,41 @@ class EasyContentManagerPage extends HTMLElement {
         this._filters = { type: '', language: '', q: '' };
         this._searchDebounce = null;
         this._selected = new Set();
-        this._sort = { field: null, dir: 'asc' };
+        this._sort = { field: 'date_ts', dir: 'desc' };
+        this._restoreFilters();
+    }
+
+    // Nhớ filter + sort qua các lần rời/quay lại trang Content Manager trong
+    // admin2 (mỗi lần điều hướng, component này bị huỷ và tạo lại từ đầu nên
+    // không thể giữ state trong bộ nhớ như admin-classic — phải dùng
+    // localStorage), giống hành vi saveFilters/restoreFilters bên admin-classic.
+    _restoreFilters() {
+        try {
+            const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            if (saved.type !== undefined) this._filters.type = saved.type;
+            if (saved.language !== undefined) this._filters.language = saved.language;
+            if (saved.q !== undefined) this._filters.q = saved.q;
+            if (saved.sortField !== undefined) this._sort.field = saved.sortField;
+            if (saved.sortDir !== undefined) this._sort.dir = saved.sortDir;
+        } catch (e) {
+            // private browsing / storage blocked / bad JSON — ignore
+        }
+    }
+
+    _saveFilters() {
+        try {
+            localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify({
+                type: this._filters.type,
+                language: this._filters.language,
+                q: this._filters.q,
+                sortField: this._sort.field,
+                sortDir: this._sort.dir,
+            }));
+        } catch (e) {
+            // private browsing / storage blocked — ignore
+        }
     }
 
     connectedCallback() {
@@ -200,11 +238,13 @@ class EasyContentManagerPage extends HTMLElement {
         const typeSelect = this.querySelector('[data-role="type"]');
         typeSelect?.addEventListener('change', (e) => {
             this._filters.type = e.target.value;
+            this._saveFilters();
             this._load();
         });
         const langSelect = this.querySelector('[data-role="language"]');
         langSelect?.addEventListener('change', (e) => {
             this._filters.language = e.target.value;
+            this._saveFilters();
             this._load();
         });
         const searchInput = this.querySelector('[data-role="search"]');
@@ -213,6 +253,7 @@ class EasyContentManagerPage extends HTMLElement {
             clearTimeout(this._searchDebounce);
             this._searchDebounce = setTimeout(() => {
                 this._filters.q = value;
+                this._saveFilters();
                 this._load();
             }, 300);
         });
@@ -242,6 +283,7 @@ class EasyContentManagerPage extends HTMLElement {
                     this._sort.field = field;
                     this._sort.dir = 'desc';
                 }
+                this._saveFilters();
                 this._applySort();
                 this._renderShell();
                 this._renderRows();

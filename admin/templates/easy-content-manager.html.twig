@@ -300,8 +300,8 @@
     var allRows = [];
     var currentPage = 1;
     var selectedRoutes = new Set();
-    var sortField = null;
-    var sortDir = 'asc';
+    var sortField = 'date_ts';
+    var sortDir = 'desc';
 
     function applySort() {
         if (!sortField) { return; }
@@ -524,6 +524,7 @@
             currentPage = 1;
             selectedRoutes.clear();
             applySort();
+            updateSortHeaders();
             renderPage();
             setStatus(allRows.length + ' content.', false);
         }).catch(function (e) {
