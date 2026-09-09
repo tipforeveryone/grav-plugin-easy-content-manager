@@ -207,14 +207,6 @@ class EasyContentManagerPage extends HTMLElement {
         }
     }
 
-    _copyRoute(route, btnEl) {
-        navigator.clipboard?.writeText(route).then(() => {
-            const original = btnEl.textContent;
-            btnEl.textContent = 'Đã chép';
-            setTimeout(() => { btnEl.textContent = original; }, 1200);
-        });
-    }
-
     _ftpSyncDefaultResolution(row) {
         if (row.type === 'changed') {
             if (row.newer === 'local') return 'local';
@@ -637,11 +629,7 @@ class EasyContentManagerPage extends HTMLElement {
             <tr data-index="${i}">
                 <td class="ecm-td-check"><input type="checkbox" class="ecm-row-check" data-route="${this._escape(row.route)}" ${this._selected.has(row.route) ? 'checked' : ''} /></td>
                 <td class="ecm-title">
-                    ${this._escape(row.title)}
-                    <div class="ecm-route">
-                        <code>${this._escape(row.route)}</code>
-                        <button type="button" class="ecm-copy-btn" data-action="copy">Chép</button>
-                    </div>
+                    <a class="ecm-title-link" href="${this._escape(row.route)}" target="_blank" rel="noopener noreferrer">${this._escape(row.title)}</a>
                 </td>
                 <td>${this._escape(row.type_label)}</td>
                 ${this._slmsActive ? `
@@ -661,7 +649,6 @@ class EasyContentManagerPage extends HTMLElement {
         tbody.querySelectorAll('tr').forEach((trEl) => {
             const row = this._rows[Number(trEl.dataset.index)];
             trEl.querySelector('[data-action="delete"]')?.addEventListener('click', () => this._deleteRow(row, trEl));
-            trEl.querySelector('[data-action="copy"]')?.addEventListener('click', (e) => this._copyRoute(row.route, e.target));
             trEl.querySelector('[data-action="ftpsync"]')?.addEventListener('click', () => this._openFtpSyncModal(row.route, row.title));
             const checkbox = trEl.querySelector('.ecm-row-check');
             checkbox?.addEventListener('change', () => {
@@ -708,12 +695,12 @@ class EasyContentManagerPage extends HTMLElement {
                 .ecm-table td { padding: 8px 10px; border-bottom: 1px solid var(--border, #e5e7eb); vertical-align: top; color: var(--foreground, #1f2937); }
                 .ecm-td-empty { text-align: center; color: var(--muted-foreground, #6b7280); padding: 24px 10px; }
                 .ecm-error { color: var(--destructive, #dc2626); }
-                .ecm-route { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-                .ecm-route code { font-size: 11px; color: var(--muted-foreground, #6b7280); }
-                .ecm-copy-btn, .ecm-edit-btn, .ecm-delete-btn { display: inline-block; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--foreground, #1f2937); text-decoration: none; }
+                .ecm-title-link { color: var(--foreground, #1f2937); text-decoration: none; font-weight: 500; }
+                .ecm-title-link:hover { color: var(--primary, #3b82f6); text-decoration: underline; }
+                .ecm-edit-btn, .ecm-delete-btn { display: inline-block; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--foreground, #1f2937); text-decoration: none; }
                 .ecm-edit-btn { color: var(--primary, #3b82f6); border-color: var(--primary, #3b82f6); margin-right: 4px; }
                 .ecm-delete-btn { color: var(--destructive, #dc2626); border-color: var(--destructive, #dc2626); }
-                .ecm-copy-btn:hover, .ecm-edit-btn:hover, .ecm-delete-btn:hover { opacity: 0.8; }
+                .ecm-edit-btn:hover, .ecm-delete-btn:hover { opacity: 0.8; }
                 .ecm-ok { color: var(--success, #16a34a); }
                 .ecm-missing { color: var(--destructive, #dc2626); }
                 .ecm-actions { text-align: right; }
