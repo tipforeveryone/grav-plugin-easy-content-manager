@@ -73,6 +73,8 @@ class EasyContentManagerPlugin extends Plugin
 
         $routes = $event['routes'];
         $routes->get('/easy-content-manager/rows', [EasyContentManagerApiController::class, 'rows']);
+        $routes->post('/easy-content-manager/ftp-sync/check', [EasyContentManagerApiController::class, 'ftpSyncCheck']);
+        $routes->post('/easy-content-manager/ftp-sync/apply', [EasyContentManagerApiController::class, 'ftpSyncApply']);
     }
 
     public function onPluginsInitialized(): void
@@ -202,6 +204,13 @@ class EasyContentManagerPlugin extends Plugin
         $twig->addFunction(new \Twig\TwigFunction('ecm_template_options', [$this, 'twigTemplateOptions']));
         $twig->addFunction(new \Twig\TwigFunction('ecm_slms_active', [$this, 'twigSlmsActive']));
         $twig->addFunction(new \Twig\TwigFunction('ecm_language_options', [$this, 'twigLanguageOptions']));
+        $twig->addFunction(new \Twig\TwigFunction('ecm_ftp_sync_available', [$this, 'twigFtpSyncAvailable']));
+    }
+
+    /** Chỉ true khi user hiện tại là admin.super VÀ plugin ftp-sync sẵn sàng dùng — xem canManageFtpSync()/ftpSyncAvailable(). Gate hiển thị cột/nút "Check FTP Sync" trong template. */
+    public function twigFtpSyncAvailable(): bool
+    {
+        return $this->canManageFtpSync() && $this->ftpSyncAvailable();
     }
 
     /** Callback tĩnh dùng bởi field checkboxes "Template được duyệt hiển thị" (data-options@). */
@@ -250,6 +259,12 @@ class EasyContentManagerPlugin extends Plugin
         } elseif ($task === 'ecmsetprivate') {
             $event->stopPropagation();
             $this->handleSetPrivate($controller->post ?? []);
+        } elseif ($task === 'ecmftpsynccheck') {
+            $event->stopPropagation();
+            $this->handleFtpSyncCheck($controller->post ?? []);
+        } elseif ($task === 'ecmftpsyncapply') {
+            $event->stopPropagation();
+            $this->handleFtpSyncApply($controller->post ?? []);
         }
     }
 
@@ -443,6 +458,139 @@ class EasyContentManagerPlugin extends Plugin
         } catch (\Throwable $e) {
             $this->jsonError($e->getMessage());
         }
+    }
+
+    /**
+     * "Check FTP Sync" cho 1 dòng — diff riêng thư mục của trang đó với
+     * hosting, trả về JSON cho popup ở template render. Không đụng gì tới
+     * baseline.json của "Check differences" toàn site bên plugin ftp-sync.
+     */
+    private function handleFtpSyncCheck(array $post): void
+    {
+        if (!$this->canManageFtpSync()) {
+            $this->jsonError('Not authorized.');
+
+            return;
+        }
+
+        $route = '/' . ltrim((string) ($post['route'] ?? ''), '/');
+        if ($route === '/') {
+            $this->jsonError('Missing route.');
+
+            return;
+        }
+
+        try {
+            [$localDir, $remoteDir] = $this->ftpSyncPathsForRoute($route);
+            $rows = $this->ftpSyncManager()->checkPathDiff($localDir, $remoteDir);
+            $this->grav['admin']->json_response = ['status' => 'success', 'rows' => $rows];
+        } catch (\Throwable $e) {
+            $this->jsonError($e->getMessage());
+        }
+    }
+
+    /** Áp dụng resolution đã chọn trong popup "Check FTP Sync" (route + resolutions JSON trong $post) cho thư mục của 1 trang. */
+    private function handleFtpSyncApply(array $post): void
+    {
+        if (!$this->canManageFtpSync()) {
+            $this->jsonError('Not authorized.');
+
+            return;
+        }
+
+        $route = '/' . ltrim((string) ($post['route'] ?? ''), '/');
+        if ($route === '/') {
+            $this->jsonError('Missing route.');
+
+            return;
+        }
+
+        $resolutions = json_decode((string) ($post['resolutions'] ?? '{}'), true);
+        if (!is_array($resolutions)) {
+            $resolutions = [];
+        }
+
+        try {
+            [$localDir, $remoteDir] = $this->ftpSyncPathsForRoute($route);
+            $result = $this->ftpSyncManager()->applyPathResolutions($localDir, $remoteDir, $resolutions);
+            Cache::clearCache('invalidate');
+            $this->grav['admin']->json_response = ['status' => 'success'] + $result;
+        } catch (\Throwable $e) {
+            $this->jsonError($e->getMessage());
+        }
+    }
+
+    /**
+     * admin.super only — dữ liệu FTP nhạy cảm (cấu trúc file + timestamp
+     * trên hosting), giống hệt cách chính plugin ftp-sync tự gate MỌI thao
+     * tác của nó (kể cả "Check differences" chỉ đọc) bằng admin.super, chứ
+     * không dùng canManage() (admin.pages) như các task khác của ECM.
+     */
+    private function canManageFtpSync(): bool
+    {
+        $user = $this->grav['user'] ?? null;
+
+        return $user !== null && $user->authenticated && $user->authorize('admin.super') === true;
+    }
+
+    /**
+     * Có cài + bật ftp-sync và đang chạy được (local, hoặc
+     * force_allow_remote) hay không — KHÔNG kiểm tra quyền user (xem
+     * canManageFtpSync() cho việc đó, và twigFtpSyncAvailable() gộp cả 2).
+     *
+     * QUAN TRỌNG: $this->grav['plugins']->get($name) trả về Data (object
+     * CONFIG đọc từ blueprint), KHÔNG PHẢI instance thật của plugin — nên
+     * không có method isEnabled(). Dùng \Grav\Common\Plugins::getPlugin()
+     * (static) mới đúng — trả về chính instance FTPSyncPlugin đã khởi tạo.
+     */
+    private function ftpSyncAvailable(): bool
+    {
+        if (!$this->config->get('plugins.ftp-sync.enabled', true)) {
+            return false;
+        }
+
+        $plugin = \Grav\Common\Plugins::getPlugin('ftp-sync');
+        if ($plugin === null || !method_exists($plugin, 'isEnabled') || !$plugin->isEnabled()) {
+            return false;
+        }
+
+        return class_exists('Grav\\Plugin\\FtpSync\\SyncManager');
+    }
+
+    /**
+     * @return array{0:string,1:string} [localDir, remoteDir] tuyệt đối cho
+     * thư mục của 1 trang — localDir = $page->path() (đã đúng là folder
+     * trang), remoteDir = remote_base_path (config ftp-sync) + user/pages +
+     * phần đường dẫn còn lại sau PAGES_DIR.
+     */
+    private function ftpSyncPathsForRoute(string $route): array
+    {
+        if (!$this->ftpSyncAvailable()) {
+            throw new \RuntimeException('FTP Sync plugin is not available (not installed, not enabled, or not a local environment).');
+        }
+
+        $pages = $this->grav['pages'];
+        $pages->enablePages();
+        $page = $pages->find($route, true);
+        if (!$page) {
+            throw new \RuntimeException('Content not found.');
+        }
+
+        $localDir = rtrim((string) $page->path(), '/');
+        $relPath = ltrim(str_replace(rtrim(PAGES_DIR, '/'), '', $localDir), '/');
+
+        $remoteBase = rtrim((string) $this->config->get('plugins.ftp-sync.remote_base_path', '/'), '/');
+        $remoteDir = $remoteBase . '/user/pages/' . $relPath;
+
+        return [$localDir, $remoteDir];
+    }
+
+    private function ftpSyncManager(): \Grav\Plugin\FtpSync\SyncManager
+    {
+        $config = (array) $this->config->get('plugins.ftp-sync');
+        $config['active_theme'] = (string) $this->config->get('system.pages.theme', '');
+
+        return new \Grav\Plugin\FtpSync\SyncManager($config, DATA_DIR . 'ftp-sync');
     }
 
     /** @return array<int, string> danh sách slug template đã được tick trong Admin config (field "templates", use: keys). */

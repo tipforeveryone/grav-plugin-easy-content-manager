@@ -72,6 +72,9 @@ class EasyContentManagerPage extends HTMLElement {
         this._searchDebounce = null;
         this._selected = new Set();
         this._sort = { field: 'date_ts', dir: 'desc' };
+        this._ftpSyncAvailable = false;
+        this._ftpSyncRoute = null;
+        this._ftpSyncRows = null;
         this._restoreFilters();
     }
 
@@ -135,15 +138,20 @@ class EasyContentManagerPage extends HTMLElement {
         return body;
     }
 
-    async _load() {
+    _buildQueryParams() {
         const params = new URLSearchParams();
         if (this._filters.type) params.set('type', this._filters.type);
         if (this._filters.language) params.set('language', this._filters.language);
         if (this._filters.q) params.set('q', this._filters.q);
         if (this._filters.privateOnly) params.set('private_only', '1');
+        return params;
+    }
+
+    async _load() {
+        const params = this._buildQueryParams();
 
         const tbody = this.querySelector('.ecm-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="8">Đang tải…</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="${this._colCount()}">Đang tải…</td></tr>`;
 
         try {
             const res = await this._fetch(`/easy-content-manager/rows?${params.toString()}`);
@@ -152,14 +160,34 @@ class EasyContentManagerPage extends HTMLElement {
             this._typeOptions = data.type_options ?? {};
             this._languageOptions = data.language_options ?? {};
             this._slmsActive = !!data.slms_active;
+            this._ftpSyncAvailable = !!data.ftp_sync_available;
             this._selected = new Set();
             this._applySort();
             this._renderShell();
             this._renderRows();
         } catch (err) {
             if (tbody) {
-                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="8">${this._escape(err.message || 'Load failed')}</td></tr>`;
+                tbody.innerHTML = `<tr><td class="ecm-td-empty ecm-error" colspan="${this._colCount()}">${this._escape(err.message || 'Load failed')}</td></tr>`;
             }
+        }
+    }
+
+    /**
+     * Re-fetch rows and re-render ONLY the tbody (not _renderShell(), which
+     * replaces this.innerHTML wholesale — that would tear down the FTP Sync
+     * modal DOM while it's still open showing the just-applied result).
+     * Used after _applyFtpSync() to refresh stale row dates without closing
+     * the modal.
+     */
+    async _refreshRowsSilently() {
+        try {
+            const res = await this._fetch(`/easy-content-manager/rows?${this._buildQueryParams().toString()}`);
+            const data = res.data ?? {};
+            this._rows = Array.isArray(data.rows) ? data.rows : [];
+            this._applySort();
+            this._renderRows();
+        } catch (err) {
+            // Best-effort — table just stays stale until the next explicit filter/reload.
         }
     }
 
@@ -185,6 +213,164 @@ class EasyContentManagerPage extends HTMLElement {
             btnEl.textContent = 'Đã chép';
             setTimeout(() => { btnEl.textContent = original; }, 1200);
         });
+    }
+
+    _ftpSyncDefaultResolution(row) {
+        if (row.type === 'changed') {
+            if (row.newer === 'local') return 'local';
+            if (row.newer === 'remote') return 'remote';
+            return '';
+        }
+        if (row.type === 'missing_remote') return 'local';
+        if (row.type === 'missing_local') return 'remote';
+        return '';
+    }
+
+    _ftpSyncStatusLabel(row) {
+        if (row.type === 'changed') {
+            if (row.newer === 'local') return 'Khác nhau — Local mới hơn';
+            if (row.newer === 'remote') return 'Khác nhau — Hosting mới hơn';
+            return 'Khác nhau — không rõ bên nào mới hơn';
+        }
+        if (row.type === 'missing_remote') return 'Chỉ có ở Local (chưa có trên Hosting)';
+        if (row.type === 'missing_local') return 'Chỉ có ở Hosting (chưa có ở Local)';
+        return row.type;
+    }
+
+    _ftpSyncStatusClass(row) {
+        if (row.type === 'missing_remote') return 'ecm-ftpsync-local-only';
+        if (row.type === 'missing_local') return 'ecm-ftpsync-host-only';
+        if (row.type === 'changed' && row.newer) return 'ecm-ftpsync-newer';
+        return 'ecm-ftpsync-unknown';
+    }
+
+    _ftpSyncFormatStat(stat) {
+        if (!stat) return '—';
+        const d = new Date(stat.mtime * 1000);
+        return `${stat.size} bytes, ${d.toLocaleString()}`;
+    }
+
+    _closeFtpSyncModal() {
+        const overlay = this.querySelector('[data-role="ftpsync-overlay"]');
+        overlay?.classList.remove('ecm-open');
+        this._ftpSyncRoute = null;
+        this._ftpSyncRows = null;
+    }
+
+    async _openFtpSyncModal(route, title) {
+        this._ftpSyncRoute = route;
+        this._ftpSyncRows = null;
+
+        const overlay = this.querySelector('[data-role="ftpsync-overlay"]');
+        const titleEl = this.querySelector('[data-role="ftpsync-title"]');
+        const bodyEl = this.querySelector('[data-role="ftpsync-body"]');
+        const statusEl = this.querySelector('[data-role="ftpsync-status"]');
+        const applyBtn = this.querySelector('[data-role="ftpsync-apply"]');
+
+        if (titleEl) titleEl.textContent = title;
+        if (statusEl) statusEl.textContent = '';
+        if (bodyEl) bodyEl.innerHTML = `<div class="ecm-ftpsync-empty">Đang kiểm tra…</div>`;
+        if (applyBtn) applyBtn.disabled = true;
+        overlay?.classList.add('ecm-open');
+
+        try {
+            const res = await this._fetch('/easy-content-manager/ftp-sync/check', {
+                method: 'POST',
+                body: JSON.stringify({ route }),
+            });
+            if (this._ftpSyncRoute !== route) return;
+            this._ftpSyncRows = (res.data ?? {}).rows ?? {};
+            this._renderFtpSyncRows();
+        } catch (err) {
+            if (this._ftpSyncRoute !== route) return;
+            if (bodyEl) bodyEl.innerHTML = `<div class="ecm-ftpsync-empty ecm-error">${this._escape(err.message || 'Check failed')}</div>`;
+        }
+    }
+
+    _renderFtpSyncRows() {
+        const bodyEl = this.querySelector('[data-role="ftpsync-body"]');
+        const applyBtn = this.querySelector('[data-role="ftpsync-apply"]');
+        if (!bodyEl) return;
+
+        const paths = Object.keys(this._ftpSyncRows || {});
+        if (paths.length === 0) {
+            bodyEl.innerHTML = `<div class="ecm-ftpsync-empty">Không có khác biệt nào — Local và Hosting đã khớp.</div>`;
+            if (applyBtn) applyBtn.disabled = true;
+            return;
+        }
+
+        if (applyBtn) applyBtn.disabled = false;
+
+        const options = [
+            ['', '-- Bỏ qua --'],
+            ['local', 'Đẩy lên Hosting (Local → Remote)'],
+            ['remote', 'Kéo về Local (Remote → Local)'],
+            ['delete_local', 'Xoá ở Local'],
+            ['delete_remote', 'Xoá ở Hosting'],
+        ];
+
+        const rowsHtml = paths.map((path) => {
+            const row = this._ftpSyncRows[path];
+            const def = this._ftpSyncDefaultResolution(row);
+            const optionsHtml = options.map(([value, label]) => `<option value="${value}" ${value === def ? 'selected' : ''}>${label}</option>`).join('');
+            return `
+                <tr>
+                    <td class="ecm-ftpsync-path">${this._escape(path)}</td>
+                    <td class="${this._ftpSyncStatusClass(row)}">${this._escape(this._ftpSyncStatusLabel(row))}</td>
+                    <td>${this._escape(this._ftpSyncFormatStat(row.local))}</td>
+                    <td>${this._escape(this._ftpSyncFormatStat(row.remote))}</td>
+                    <td><select class="ecm-ftpsync-resolution" data-path="${this._escape(path)}">${optionsHtml}</select></td>
+                </tr>
+            `;
+        }).join('');
+
+        bodyEl.innerHTML = `
+            <table class="ecm-ftpsync-table">
+                <thead><tr><th>File</th><th>Trạng thái</th><th>Local</th><th>Hosting</th><th>Xử lý</th></tr></thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        `;
+    }
+
+    async _applyFtpSync() {
+        if (!this._ftpSyncRoute) return;
+
+        const bodyEl = this.querySelector('[data-role="ftpsync-body"]');
+        const statusEl = this.querySelector('[data-role="ftpsync-status"]');
+        const applyBtn = this.querySelector('[data-role="ftpsync-apply"]');
+
+        const resolutions = {};
+        bodyEl?.querySelectorAll('.ecm-ftpsync-resolution').forEach((select) => {
+            if (select.value) resolutions[select.dataset.path] = select.value;
+        });
+
+        if (Object.keys(resolutions).length === 0) {
+            window.alert('Chưa chọn cách xử lý cho file nào.');
+            return;
+        }
+
+        if (applyBtn) applyBtn.disabled = true;
+        if (statusEl) statusEl.textContent = 'Đang áp dụng…';
+
+        const route = this._ftpSyncRoute;
+
+        try {
+            const res = await this._fetch('/easy-content-manager/ftp-sync/apply', {
+                method: 'POST',
+                body: JSON.stringify({ route, resolutions }),
+            });
+            const data = res.data ?? {};
+            let msg = `Đã áp dụng ${data.applied ?? 0} file.`;
+            if (data.skipped) msg += ` Bỏ qua/lỗi: ${data.skipped}.`;
+            if (data.backup) msg += ` Backup: ${data.backup}.`;
+            if (statusEl) statusEl.textContent = msg;
+
+            await this._openFtpSyncModal(route, this.querySelector('[data-role="ftpsync-title"]')?.textContent || '');
+            this._refreshRowsSilently();
+        } catch (err) {
+            if (statusEl) statusEl.textContent = err.message || 'Apply failed';
+            if (applyBtn) applyBtn.disabled = false;
+        }
     }
 
     _renderShell() {
@@ -233,12 +419,29 @@ class EasyContentManagerPage extends HTMLElement {
                             ${this._slmsActive ? '<th>Ngôn ngữ</th><th>Bản dịch</th>' : ''}
                             ${this._sortableHeader('Ngày đăng', 'date_ts')}
                             ${this._sortableHeader('Ngày sửa', 'modified_ts')}
+                            ${this._ftpSyncAvailable ? '<th>FTP Sync</th>' : ''}
                             <th></th>
                         </tr>
                     </thead>
                     <tbody class="ecm-tbody"></tbody>
                 </table>
             </div>
+            ${this._ftpSyncAvailable ? `
+            <div class="ecm-ftpsync-overlay" data-role="ftpsync-overlay">
+                <div class="ecm-ftpsync-modal">
+                    <div class="ecm-ftpsync-modal-header">
+                        <h3>FTP Sync — <span data-role="ftpsync-title"></span></h3>
+                        <button type="button" class="ecm-ftpsync-close" data-role="ftpsync-close">&times;</button>
+                    </div>
+                    <div class="ecm-ftpsync-modal-body" data-role="ftpsync-body"></div>
+                    <div class="ecm-ftpsync-modal-footer">
+                        <span class="ecm-ftpsync-status" data-role="ftpsync-status"></span>
+                        <button type="button" class="ecm-btn" data-role="ftpsync-cancel">Đóng</button>
+                        <button type="button" class="ecm-btn ecm-btn-primary" data-role="ftpsync-apply">Áp dụng</button>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
         `;
 
         const typeSelect = this.querySelector('[data-role="type"]');
@@ -301,6 +504,21 @@ class EasyContentManagerPage extends HTMLElement {
                 this._renderRows();
             });
         });
+
+        if (this._ftpSyncAvailable) {
+            const closeBtn = this.querySelector('[data-role="ftpsync-close"]');
+            const cancelBtn = this.querySelector('[data-role="ftpsync-cancel"]');
+            const overlay = this.querySelector('[data-role="ftpsync-overlay"]');
+            const applyBtn = this.querySelector('[data-role="ftpsync-apply"]');
+            closeBtn?.addEventListener('click', () => this._closeFtpSyncModal());
+            cancelBtn?.addEventListener('click', () => this._closeFtpSyncModal());
+            overlay?.addEventListener('click', (e) => { if (e.target === overlay) this._closeFtpSyncModal(); });
+            applyBtn?.addEventListener('click', () => this._applyFtpSync());
+        }
+    }
+
+    _colCount() {
+        return 8 + (this._ftpSyncAvailable ? 1 : 0);
     }
 
     _sortableHeader(label, field) {
@@ -409,7 +627,7 @@ class EasyContentManagerPage extends HTMLElement {
         if (!tbody) return;
 
         if (this._rows.length === 0) {
-            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="8">Không có nội dung khớp.</td></tr>`;
+            tbody.innerHTML = `<tr><td class="ecm-td-empty" colspan="${this._colCount()}">Không có nội dung khớp.</td></tr>`;
             this._updateSelectAllState();
             this._updateSelectedCount();
             return;
@@ -432,6 +650,7 @@ class EasyContentManagerPage extends HTMLElement {
                 ` : ''}
                 <td>${this._escape(row.date)}</td>
                 <td>${this._escape(row.modified)}</td>
+                ${this._ftpSyncAvailable ? `<td><button type="button" class="ecm-btn" data-action="ftpsync" title="Check FTP Sync">Check</button></td>` : ''}
                 <td class="ecm-actions">
                     <a class="ecm-edit-btn" href="${this._escape(APP_BASE)}/pages/edit${this._escape(row.route)}">Sửa</a>
                     <button type="button" class="ecm-delete-btn" data-action="delete">Xoá</button>
@@ -443,6 +662,7 @@ class EasyContentManagerPage extends HTMLElement {
             const row = this._rows[Number(trEl.dataset.index)];
             trEl.querySelector('[data-action="delete"]')?.addEventListener('click', () => this._deleteRow(row, trEl));
             trEl.querySelector('[data-action="copy"]')?.addEventListener('click', (e) => this._copyRoute(row.route, e.target));
+            trEl.querySelector('[data-action="ftpsync"]')?.addEventListener('click', () => this._openFtpSyncModal(row.route, row.title));
             const checkbox = trEl.querySelector('.ecm-row-check');
             checkbox?.addEventListener('change', () => {
                 if (checkbox.checked) {
@@ -497,6 +717,25 @@ class EasyContentManagerPage extends HTMLElement {
                 .ecm-ok { color: var(--success, #16a34a); }
                 .ecm-missing { color: var(--destructive, #dc2626); }
                 .ecm-actions { text-align: right; }
+
+                .ecm-ftpsync-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center; }
+                .ecm-ftpsync-overlay.ecm-open { display: flex; }
+                .ecm-ftpsync-modal { background: var(--card, #fff); border-radius: 8px; width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
+                .ecm-ftpsync-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border, #e5e7eb); }
+                .ecm-ftpsync-modal-header h3 { margin: 0; font-size: 15px; color: var(--foreground, #1f2937); }
+                .ecm-ftpsync-close { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted-foreground, #6b7280); }
+                .ecm-ftpsync-modal-body { padding: 14px 18px; overflow-y: auto; }
+                .ecm-ftpsync-modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border, #e5e7eb); }
+                .ecm-ftpsync-status { margin-right: auto; font-size: 13px; color: var(--muted-foreground, #6b7280); }
+                .ecm-ftpsync-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+                .ecm-ftpsync-table th, .ecm-ftpsync-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #e5e7eb); vertical-align: top; color: var(--foreground, #1f2937); }
+                .ecm-ftpsync-path { word-break: break-all; }
+                .ecm-ftpsync-local-only { color: #1f6fb2; }
+                .ecm-ftpsync-host-only { color: #b26a1f; }
+                .ecm-ftpsync-newer { color: #1f6fb2; font-weight: 600; }
+                .ecm-ftpsync-unknown { color: var(--muted-foreground, #6b7280); }
+                .ecm-ftpsync-resolution { width: 100%; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+                .ecm-ftpsync-empty { color: var(--muted-foreground, #6b7280); padding: 16px 0; text-align: center; }
             </style>
         `;
     }

@@ -7,6 +7,7 @@ namespace Grav\Plugin\EasyContentManager\Api;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Page\Pages;
 use Grav\Plugin\Api\Controllers\AbstractApiController;
+use Grav\Plugin\Api\Exceptions\ValidationException;
 use Grav\Plugin\Api\Response\ApiResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -132,7 +133,166 @@ class EasyContentManagerApiController extends AbstractApiController
             'slms_active' => $slms['active'],
             'language_options' => $slms['languages'],
             'type_options' => $typeOptions,
+            'ftp_sync_available' => $this->ftpSyncPluginAvailable() && $this->isFtpSyncCapableUser($request),
         ]);
+    }
+
+    /**
+     * POST /easy-content-manager/ftp-sync/check — diff riêng thư mục của 1
+     * trang (route trong body) so với hosting, dùng cho nút "Check FTP
+     * Sync" theo từng dòng trong bảng content. Forward sang
+     * FtpSync\SyncManager::checkPathDiff() (xem docblock ở đó) — không có
+     * logic diff riêng ở đây.
+     */
+    public function ftpSyncCheck(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->ftpSyncGuard($request);
+
+        $body = $this->getRequestBody($request);
+        $route = '/' . ltrim((string) ($body['route'] ?? ''), '/');
+        if ($route === '/') {
+            throw new ValidationException('Missing route.');
+        }
+
+        [$localDir, $remoteDir] = $this->ftpSyncPathsForRoute($route);
+
+        try {
+            $rows = $this->ftpSyncManager()->checkPathDiff($localDir, $remoteDir);
+        } catch (\RuntimeException $e) {
+            throw new ValidationException($e->getMessage());
+        }
+
+        return ApiResponse::create(['rows' => $rows]);
+    }
+
+    /**
+     * POST /easy-content-manager/ftp-sync/apply — áp dụng resolution đã
+     * chọn (trong popup "Check FTP Sync") cho thư mục của 1 trang. Forward
+     * sang FtpSync\SyncManager::applyPathResolutions().
+     */
+    public function ftpSyncApply(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->ftpSyncGuard($request);
+
+        $body = $this->getRequestBody($request);
+        $route = '/' . ltrim((string) ($body['route'] ?? ''), '/');
+        if ($route === '/') {
+            throw new ValidationException('Missing route.');
+        }
+        $resolutions = (array) ($body['resolutions'] ?? []);
+
+        [$localDir, $remoteDir] = $this->ftpSyncPathsForRoute($route);
+
+        try {
+            $result = $this->ftpSyncManager()->applyPathResolutions($localDir, $remoteDir, $resolutions);
+        } catch (\RuntimeException $e) {
+            throw new ValidationException($e->getMessage());
+        }
+
+        \Grav\Common\Cache::clearCache('invalidate');
+
+        return ApiResponse::create($result);
+    }
+
+    /**
+     * Gate cho cả 2 endpoint FTP Sync ở trên: api.super (dữ liệu FTP nhạy
+     * cảm — cấu trúc file + timestamp trên hosting — không phải quyền đọc
+     * content thông thường, giống hệt cách chính plugin ftp-sync tự gate
+     * MỌI thao tác của nó, kể cả "Check differences" chỉ đọc, bằng
+     * admin.super/api.super), cộng điều kiện plugin ftp-sync có cài + bật +
+     * đang chạy local (isEnabled()).
+     */
+    private function ftpSyncGuard(ServerRequestInterface $request): void
+    {
+        $this->requireSuper($request);
+
+        if (!$this->ftpSyncPluginAvailable()) {
+            throw new ValidationException('FTP Sync plugin is not available (not installed, not enabled, or not a local environment).');
+        }
+    }
+
+    /**
+     * Không throw — dùng để tính flag 'ftp_sync_available' trả về cho UI
+     * (ẩn/hiện nút Check FTP Sync), tách khỏi ftpSyncGuard() (dùng để CHẶN
+     * request).
+     *
+     * QUAN TRỌNG: $this->grav['plugins']->get($name) (instance method trên
+     * service Plugins) trả về Data — object CONFIG đọc từ blueprint, KHÔNG
+     * PHẢI instance thật của plugin — nên không có method isEnabled().
+     * Dùng \Grav\Common\Plugins::getPlugin() (static) mới đúng — trả về
+     * chính instance FTPSyncPlugin đã khởi tạo (xem Plugins::getPlugins(),
+     * key theo $instance->name).
+     */
+    private function ftpSyncPluginAvailable(): bool
+    {
+        if (!$this->config->get('plugins.ftp-sync.enabled', true)) {
+            return false;
+        }
+
+        $plugin = \Grav\Common\Plugins::getPlugin('ftp-sync');
+        if ($plugin === null || !method_exists($plugin, 'isEnabled') || !$plugin->isEnabled()) {
+            return false;
+        }
+
+        return class_exists('Grav\\Plugin\\FtpSync\\SyncManager');
+    }
+
+    /**
+     * Không throw — bản bool của requireSuper(), chỉ dùng để tính flag hiển
+     * thị UI (xem ftpSyncPluginAvailable()), KHÔNG thay thế ftpSyncGuard() ở
+     * 2 endpoint check/apply (những nơi đó vẫn gọi requireSuper() trực tiếp
+     * để có throw + message rõ ràng).
+     *
+     * QUAN TRỌNG: KHÔNG gọi thẳng $user->authorize('admin.super') — user
+     * nạp qua API key/JWT (ApiKeyAuthenticator::authenticate() chỉ
+     * $accounts->load($username), không phải flow đăng nhập thật) không có
+     * property runtime authenticated/authorized được set, mà
+     * Flex\Types\Users\UserObject::authorize() bắt buộc 2 cờ đó phải true
+     * mới đi tiếp — nên authorize() luôn trả false dù account thật sự có
+     * admin.super/api.super (đã xác nhận qua debug thực tế). requireSuper()
+     * (qua PermissionResolver) không phụ thuộc 2 cờ đó nên dùng được.
+     */
+    private function isFtpSyncCapableUser(ServerRequestInterface $request): bool
+    {
+        try {
+            $this->requireSuper($request);
+
+            return true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * @return array{0:string,1:string} [localDir, remoteDir] tuyệt đối cho
+     * thư mục của 1 trang — localDir = $page->path() (đã đúng là folder
+     * trang), remoteDir = remote_base_path (config ftp-sync) + user/pages +
+     * phần đường dẫn còn lại sau PAGES_DIR.
+     */
+    private function ftpSyncPathsForRoute(string $route): array
+    {
+        $pages = $this->grav['pages'];
+        $pages->enablePages();
+        $page = $pages->find($route, true);
+        if (!$page) {
+            throw new ValidationException('Content not found.');
+        }
+
+        $localDir = rtrim((string) $page->path(), '/');
+        $relPath = ltrim(str_replace(rtrim(PAGES_DIR, '/'), '', $localDir), '/');
+
+        $remoteBase = rtrim((string) $this->config->get('plugins.ftp-sync.remote_base_path', '/'), '/');
+        $remoteDir = $remoteBase . '/user/pages/' . $relPath;
+
+        return [$localDir, $remoteDir];
+    }
+
+    private function ftpSyncManager(): \Grav\Plugin\FtpSync\SyncManager
+    {
+        $config = (array) $this->config->get('plugins.ftp-sync');
+        $config['active_theme'] = (string) $this->config->get('system.pages.theme', '');
+
+        return new \Grav\Plugin\FtpSync\SyncManager($config, DATA_DIR . 'ftp-sync');
     }
 
     /** @return array<int, string> slug template đã tick trong config plugin, dùng dropdown "Content type" + lọc bảng. */

@@ -9,10 +9,12 @@
 
 {% block content %}
 {% set slms_active = ecm_slms_active() %}
+{% set ftp_sync_available = ecm_ftp_sync_available() %}
 <div id="ecm-app"
      data-ajax-url="{{ current_url }}.json"
      data-nonce="{{ admin.getNonce() }}"
-     data-slms-active="{{ slms_active ? '1' : '0' }}">
+     data-slms-active="{{ slms_active ? '1' : '0' }}"
+     data-ftp-sync-available="{{ ftp_sync_available ? '1' : '0' }}">
 
     <style>
         #ecm-app { padding: 0 2rem 3rem 2rem; }
@@ -173,6 +175,69 @@
             font-weight: 600;
             white-space: nowrap;
         }
+
+        #ecm-ftpsync-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        #ecm-ftpsync-modal-overlay.ecm-open { display: flex; }
+        #ecm-ftpsync-modal {
+            background: #fff;
+            border-radius: 6px;
+            width: min(760px, 92vw);
+            max-height: 86vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+        }
+        #ecm-ftpsync-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.2rem;
+            border-bottom: 1px solid #e6e6e6;
+        }
+        #ecm-ftpsync-modal-header h3 { margin: 0; font-size: 1.1rem; }
+        #ecm-ftpsync-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.4rem;
+            line-height: 1;
+            cursor: pointer;
+            color: #777;
+        }
+        #ecm-ftpsync-modal-body {
+            padding: 1rem 1.2rem;
+            overflow-y: auto;
+        }
+        #ecm-ftpsync-modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            padding: 1rem 1.2rem;
+            border-top: 1px solid #e6e6e6;
+        }
+        #ecm-ftpsync-modal-status { margin-right: auto; color: #555; }
+        .ecm-ftpsync-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .ecm-ftpsync-table th, .ecm-ftpsync-table td {
+            text-align: left;
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid #eee;
+            vertical-align: top;
+        }
+        .ecm-ftpsync-path { word-break: break-all; }
+        .ecm-ftpsync-status-local-only { color: #1f6fb2; }
+        .ecm-ftpsync-status-host-only { color: #b26a1f; }
+        .ecm-ftpsync-status-newer { color: #1f6fb2; font-weight: 600; }
+        .ecm-ftpsync-status-unknown { color: #777; }
+        .ecm-ftpsync-resolution { width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 0.25rem 0.4rem; }
+        .ecm-ftpsync-empty { color: #777; padding: 1rem 0; }
     </style>
 
     {# Khối 1: lọc theo Content type + Language — áp dụng trước, thu hẹp tập content. #}
@@ -248,6 +313,9 @@
                 <th class="ecm-col-narrow ecm-sortable" data-sort-field="date_ts">Ngày đăng<span class="ecm-sort-arrow"></span></th>
                 <th class="ecm-col-narrow ecm-sortable" data-sort-field="modified_ts">Ngày sửa<span class="ecm-sort-arrow"></span></th>
                 <th>Slug</th>
+                {% if ftp_sync_available %}
+                <th class="ecm-col-action">FTP Sync</th>
+                {% endif %}
                 <th class="ecm-col-action">Edit</th>
                 <th class="ecm-col-action">Delete</th>
             </tr>
@@ -270,6 +338,23 @@
             <button type="button" class="button" id="ecm-next-page" title="Trang sau"><i class="fa fa-chevron-right"></i></button>
         </div>
     </div>
+
+    {% if ftp_sync_available %}
+    <div id="ecm-ftpsync-modal-overlay">
+        <div id="ecm-ftpsync-modal">
+            <div id="ecm-ftpsync-modal-header">
+                <h3>FTP Sync — <span id="ecm-ftpsync-modal-title"></span></h3>
+                <button type="button" id="ecm-ftpsync-modal-close">&times;</button>
+            </div>
+            <div id="ecm-ftpsync-modal-body"></div>
+            <div id="ecm-ftpsync-modal-footer">
+                <span id="ecm-ftpsync-modal-status"></span>
+                <button type="button" class="button" id="ecm-ftpsync-modal-cancel">Đóng</button>
+                <button type="button" class="button primary" id="ecm-ftpsync-modal-apply">Áp dụng</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <script>
@@ -280,6 +365,7 @@
     var ajaxUrl = app.dataset.ajaxUrl;
     var nonce = app.dataset.nonce;
     var slmsActive = app.dataset.slmsActive === '1';
+    var ftpSyncAvailable = app.dataset.ftpSyncAvailable === '1';
 
     var searchInput = document.getElementById('ecm-search');
     var typeSelect = document.getElementById('ecm-type');
@@ -371,7 +457,7 @@
             var tr = document.createElement('tr');
             var td = document.createElement('td');
             td.className = 'ecm-empty';
-            td.colSpan = (slmsActive ? 8 : 6) + 2;
+            td.colSpan = (slmsActive ? 8 : 6) + 2 + (ftpSyncAvailable ? 1 : 0);
             td.textContent = 'Không có content nào khớp bộ lọc.';
             tr.appendChild(td);
             tbody.appendChild(tr);
@@ -427,6 +513,20 @@
             tdSlug.className = 'ecm-slug';
             tdSlug.textContent = row.slug;
             tr.appendChild(tdSlug);
+
+            if (ftpSyncAvailable) {
+                var tdFtpSync = document.createElement('td');
+                tdFtpSync.className = 'ecm-col-action';
+                var ftpSyncBtn = document.createElement('button');
+                ftpSyncBtn.type = 'button';
+                ftpSyncBtn.className = 'button';
+                ftpSyncBtn.title = 'Check FTP Sync';
+                ftpSyncBtn.innerHTML = '<i class="fa fa-exchange"></i>';
+                ftpSyncBtn.dataset.ftpsyncRoute = row.route;
+                ftpSyncBtn.dataset.ftpsyncTitle = row.title;
+                tdFtpSync.appendChild(ftpSyncBtn);
+                tr.appendChild(tdFtpSync);
+            }
 
             var tdEdit = document.createElement('td');
             tdEdit.className = 'ecm-col-action';
@@ -584,6 +684,184 @@
             setStatus('Error: ' + e, true);
         });
     });
+
+    function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = String(str === undefined || str === null ? '' : str);
+        return div.innerHTML;
+    }
+
+    if (ftpSyncAvailable) {
+        var ftpSyncOverlay = document.getElementById('ecm-ftpsync-modal-overlay');
+        var ftpSyncTitleEl = document.getElementById('ecm-ftpsync-modal-title');
+        var ftpSyncBodyEl = document.getElementById('ecm-ftpsync-modal-body');
+        var ftpSyncStatusEl = document.getElementById('ecm-ftpsync-modal-status');
+        var ftpSyncApplyBtn = document.getElementById('ecm-ftpsync-modal-apply');
+        var ftpSyncCloseBtn = document.getElementById('ecm-ftpsync-modal-close');
+        var ftpSyncCancelBtn = document.getElementById('ecm-ftpsync-modal-cancel');
+        var ftpSyncCurrentRoute = null;
+
+        var FTPSYNC_TYPE_LABELS = {
+            missing_remote: 'Chỉ có ở Local (chưa có trên Hosting)',
+            missing_local: 'Chỉ có ở Hosting (chưa có ở Local)'
+        };
+
+        var FTPSYNC_RESOLUTION_OPTIONS = [
+            ['', '-- Bỏ qua --'],
+            ['local', 'Đẩy lên Hosting (Local → Remote)'],
+            ['remote', 'Kéo về Local (Remote → Local)'],
+            ['delete_local', 'Xoá ở Local'],
+            ['delete_remote', 'Xoá ở Hosting']
+        ];
+
+        // Gợi ý mặc định giống hệt logic UI của chính plugin ftp-sync (xem
+        // admin-next/pages/ftp-sync.js): bên nào mới hơn thì mặc định đẩy/kéo
+        // theo hướng đó; chỉ có ở 1 bên thì mặc định đẩy/kéo cho khớp.
+        function ftpSyncDefaultResolution(row) {
+            if (row.type === 'changed') {
+                if (row.newer === 'local') { return 'local'; }
+                if (row.newer === 'remote') { return 'remote'; }
+                return '';
+            }
+            if (row.type === 'missing_remote') { return 'local'; }
+            if (row.type === 'missing_local') { return 'remote'; }
+            return '';
+        }
+
+        function ftpSyncStatusLabel(row) {
+            if (row.type === 'changed') {
+                if (row.newer === 'local') { return 'Khác nhau — Local mới hơn'; }
+                if (row.newer === 'remote') { return 'Khác nhau — Hosting mới hơn'; }
+                return 'Khác nhau — không rõ bên nào mới hơn';
+            }
+            return FTPSYNC_TYPE_LABELS[row.type] || row.type;
+        }
+
+        function ftpSyncStatusClass(row) {
+            if (row.type === 'missing_remote') { return 'ecm-ftpsync-status-local-only'; }
+            if (row.type === 'missing_local') { return 'ecm-ftpsync-status-host-only'; }
+            if (row.type === 'changed' && row.newer) { return 'ecm-ftpsync-status-newer'; }
+            return 'ecm-ftpsync-status-unknown';
+        }
+
+        function ftpSyncFormatStat(stat) {
+            if (!stat) { return '—'; }
+            var d = new Date(stat.mtime * 1000);
+            return stat.size + ' bytes, ' + d.toLocaleString();
+        }
+
+        function ftpSyncCloseModal() {
+            ftpSyncOverlay.classList.remove('ecm-open');
+            ftpSyncCurrentRoute = null;
+        }
+
+        function ftpSyncRenderRows(rows) {
+            var paths = Object.keys(rows);
+            if (paths.length === 0) {
+                ftpSyncBodyEl.innerHTML = '<div class="ecm-ftpsync-empty">Không có khác biệt nào — Local và Hosting đã khớp.</div>';
+                ftpSyncApplyBtn.disabled = true;
+                return;
+            }
+
+            ftpSyncApplyBtn.disabled = false;
+
+            var html = '<table class="ecm-ftpsync-table"><thead><tr>'
+                + '<th>File</th><th>Trạng thái</th><th>Local</th><th>Hosting</th><th>Xử lý</th>'
+                + '</tr></thead><tbody>';
+
+            paths.forEach(function (path) {
+                var row = rows[path];
+                var def = ftpSyncDefaultResolution(row);
+                var rowOptions = FTPSYNC_RESOLUTION_OPTIONS.map(function (opt) {
+                    var selected = opt[0] === def ? ' selected' : '';
+                    return '<option value="' + opt[0] + '"' + selected + '>' + opt[1] + '</option>';
+                }).join('');
+
+                html += '<tr>'
+                    + '<td class="ecm-ftpsync-path">' + escapeHtml(path) + '</td>'
+                    + '<td class="' + ftpSyncStatusClass(row) + '">' + escapeHtml(ftpSyncStatusLabel(row)) + '</td>'
+                    + '<td>' + escapeHtml(ftpSyncFormatStat(row.local)) + '</td>'
+                    + '<td>' + escapeHtml(ftpSyncFormatStat(row.remote)) + '</td>'
+                    + '<td><select class="ecm-ftpsync-resolution" data-path="' + escapeHtml(path) + '">' + rowOptions + '</select></td>'
+                    + '</tr>';
+            });
+
+            html += '</tbody></table>';
+            ftpSyncBodyEl.innerHTML = html;
+        }
+
+        function ftpSyncOpenModal(route, title) {
+            ftpSyncCurrentRoute = route;
+            ftpSyncTitleEl.textContent = title;
+            ftpSyncStatusEl.textContent = '';
+            ftpSyncBodyEl.innerHTML = '<div class="ecm-ftpsync-empty">Đang kiểm tra...</div>';
+            ftpSyncApplyBtn.disabled = true;
+            ftpSyncOverlay.classList.add('ecm-open');
+
+            post('ecmftpsynccheck', { route: route }).then(function (data) {
+                if (ftpSyncCurrentRoute !== route) { return; }
+                if (data.status !== 'success') {
+                    ftpSyncBodyEl.innerHTML = '<div class="ecm-ftpsync-empty">Error: ' + escapeHtml(data.message || 'unknown') + '</div>';
+                    return;
+                }
+                ftpSyncRenderRows(data.rows || {});
+            }).catch(function (e) {
+                if (ftpSyncCurrentRoute !== route) { return; }
+                ftpSyncBodyEl.innerHTML = '<div class="ecm-ftpsync-empty">Error: ' + escapeHtml(String(e)) + '</div>';
+            });
+        }
+
+        tbody.addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-ftpsync-route]');
+            if (!btn) { return; }
+            ftpSyncOpenModal(btn.dataset.ftpsyncRoute, btn.dataset.ftpsyncTitle);
+        });
+
+        ftpSyncCloseBtn.addEventListener('click', ftpSyncCloseModal);
+        ftpSyncCancelBtn.addEventListener('click', ftpSyncCloseModal);
+        ftpSyncOverlay.addEventListener('click', function (e) {
+            if (e.target === ftpSyncOverlay) { ftpSyncCloseModal(); }
+        });
+
+        ftpSyncApplyBtn.addEventListener('click', function () {
+            if (!ftpSyncCurrentRoute) { return; }
+
+            var resolutions = {};
+            ftpSyncBodyEl.querySelectorAll('.ecm-ftpsync-resolution').forEach(function (select) {
+                if (select.value) { resolutions[select.dataset.path] = select.value; }
+            });
+
+            if (Object.keys(resolutions).length === 0) {
+                window.alert('Chưa chọn cách xử lý cho file nào.');
+                return;
+            }
+
+            ftpSyncApplyBtn.disabled = true;
+            ftpSyncStatusEl.textContent = 'Đang áp dụng...';
+
+            post('ecmftpsyncapply', { route: ftpSyncCurrentRoute, resolutions: JSON.stringify(resolutions) }).then(function (data) {
+                if (data.status !== 'success') {
+                    ftpSyncStatusEl.textContent = 'Error: ' + (data.message || 'unknown');
+                    ftpSyncApplyBtn.disabled = false;
+                    return;
+                }
+
+                var msg = 'Đã áp dụng ' + data.applied + ' file.';
+                if (data.skipped) { msg += ' Bỏ qua/lỗi: ' + data.skipped + '.'; }
+                if (data.backup) { msg += ' Backup: ' + data.backup + '.'; }
+                ftpSyncStatusEl.textContent = msg;
+                ftpSyncApplyBtn.disabled = false;
+
+                var route = ftpSyncCurrentRoute;
+                var title = ftpSyncTitleEl.textContent;
+                ftpSyncOpenModal(route, title);
+                loadContent();
+            }).catch(function (e) {
+                ftpSyncStatusEl.textContent = 'Error: ' + e;
+                ftpSyncApplyBtn.disabled = false;
+            });
+        });
+    }
 
     tbody.addEventListener('change', function (e) {
         var cb = e.target.closest('input.ecm-row-check');
