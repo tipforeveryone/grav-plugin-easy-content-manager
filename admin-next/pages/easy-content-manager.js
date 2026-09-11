@@ -249,7 +249,7 @@ class EasyContentManagerPage extends HTMLElement {
         this._ftpSyncRows = null;
     }
 
-    async _openFtpSyncModal(route, title) {
+    async _openFtpSyncModal(route, title, preserveStatus = false) {
         this._ftpSyncRoute = route;
         this._ftpSyncRows = null;
 
@@ -260,7 +260,7 @@ class EasyContentManagerPage extends HTMLElement {
         const applyBtn = this.querySelector('[data-role="ftpsync-apply"]');
 
         if (titleEl) titleEl.textContent = title;
-        if (statusEl) statusEl.textContent = '';
+        if (statusEl && !preserveStatus) statusEl.textContent = '';
         if (bodyEl) bodyEl.innerHTML = `<div class="ecm-ftpsync-empty">Đang kiểm tra…</div>`;
         if (applyBtn) applyBtn.disabled = true;
         overlay?.classList.add('ecm-open');
@@ -355,9 +355,19 @@ class EasyContentManagerPage extends HTMLElement {
             let msg = `Đã áp dụng ${data.applied ?? 0} file.`;
             if (data.skipped) msg += ` Bỏ qua/lỗi: ${data.skipped}.`;
             if (data.backup) msg += ` Backup: ${data.backup}.`;
-            if (statusEl) statusEl.textContent = msg;
 
-            await this._openFtpSyncModal(route, this.querySelector('[data-role="ftpsync-title"]')?.textContent || '');
+            const errors = data.errors ?? {};
+            const errorPaths = Object.keys(errors);
+            if (statusEl) {
+                if (errorPaths.length > 0) {
+                    const detail = errorPaths.map((p) => `${this._escape(p)}: ${this._escape(errors[p])}`).join('<br>');
+                    statusEl.innerHTML = `${this._escape(msg)}<br><span class="ecm-error">${detail}</span>`;
+                } else {
+                    statusEl.textContent = msg;
+                }
+            }
+
+            await this._openFtpSyncModal(route, this.querySelector('[data-role="ftpsync-title"]')?.textContent || '', true);
             this._refreshRowsSilently();
         } catch (err) {
             if (statusEl) statusEl.textContent = err.message || 'Apply failed';

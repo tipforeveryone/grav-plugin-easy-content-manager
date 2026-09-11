@@ -224,6 +224,7 @@
             border-top: 1px solid #e6e6e6;
         }
         #ecm-ftpsync-modal-status { margin-right: auto; color: #555; }
+        #ecm-ftpsync-modal-status .ecm-ftpsync-error-detail { color: #b00020; }
         .ecm-ftpsync-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
         .ecm-ftpsync-table th, .ecm-ftpsync-table td {
             text-align: left;
@@ -790,10 +791,10 @@
             ftpSyncBodyEl.innerHTML = html;
         }
 
-        function ftpSyncOpenModal(route, title) {
+        function ftpSyncOpenModal(route, title, preserveStatus) {
             ftpSyncCurrentRoute = route;
             ftpSyncTitleEl.textContent = title;
-            ftpSyncStatusEl.textContent = '';
+            if (!preserveStatus) { ftpSyncStatusEl.textContent = ''; }
             ftpSyncBodyEl.innerHTML = '<div class="ecm-ftpsync-empty">Đang kiểm tra...</div>';
             ftpSyncApplyBtn.disabled = true;
             ftpSyncOverlay.classList.add('ecm-open');
@@ -849,12 +850,22 @@
                 var msg = 'Đã áp dụng ' + data.applied + ' file.';
                 if (data.skipped) { msg += ' Bỏ qua/lỗi: ' + data.skipped + '.'; }
                 if (data.backup) { msg += ' Backup: ' + data.backup + '.'; }
-                ftpSyncStatusEl.textContent = msg;
+
+                var errors = data.errors || {};
+                var errorPaths = Object.keys(errors);
+                if (errorPaths.length > 0) {
+                    var detail = errorPaths.map(function (p) {
+                        return escapeHtml(p) + ': ' + escapeHtml(errors[p]);
+                    }).join('<br>');
+                    ftpSyncStatusEl.innerHTML = escapeHtml(msg) + '<br><span class="ecm-ftpsync-error-detail">' + detail + '</span>';
+                } else {
+                    ftpSyncStatusEl.textContent = msg;
+                }
                 ftpSyncApplyBtn.disabled = false;
 
                 var route = ftpSyncCurrentRoute;
                 var title = ftpSyncTitleEl.textContent;
-                ftpSyncOpenModal(route, title);
+                ftpSyncOpenModal(route, title, true);
                 loadContent();
             }).catch(function (e) {
                 ftpSyncStatusEl.textContent = 'Error: ' + e;
